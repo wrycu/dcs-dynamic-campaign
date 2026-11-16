@@ -1,0 +1,18 @@
+# Campaign server settings. Distances in nautical miles, times in seconds.
+
+[bubble]
+# Ordinary ground formations exist in DCS while a player is within these distances.
+# They spawn inside ground_spawn_nm and despawn only once every player is beyond
+# ground_despawn_nm (must be >= the spawn distance; the gap stops flicker at the edge).
+ground_spawn_nm = 20
+ground_despawn_nm = 25
+
+# Air defences use their missile range plus these margins (or the ground distances, if larger),
+# so a site is up before anyone can enter its envelope. E.g. an SA-6 (11.9 nm) spawns at 21.9 nm.
+sam_spawn_margin_nm = 10
+sam_despawn_margin_nm = 15
+
+min_dwell_s = 90          # a fresh spawn stays at least this long
+max_units = 300           # live campaign ground vehicles in DCS
+max_spawns_per_tick = 4   # spread spawns out to avoid frame hitches
+lookahead_s = 60          # also spawn around where each player will be this far ahead

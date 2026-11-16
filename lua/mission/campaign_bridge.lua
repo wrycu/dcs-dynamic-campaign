@@ -1,0 +1,746 @@
+--[[
+Campaign bridge: mission scripting environment side.
+
+Load once at mission start with a DO SCRIPT FILE trigger. Runs on the dedicated server only
+(DCS runs mission scripts on the server in multiplayer). Clients need nothing installed.
+
+Requirements:
+  * MissionScripting.lua must leave `require` and `package` unsanitized so LuaSocket can load.
+  * The server should not pause when empty: the network pump runs on model time and stops
+    while the mission is paused.
+
+Optional: define a global CampaignBridgeConfig table before loading to override `defaults`.
+
+Protocol: see docs/protocol.md. Lua 5.1 (DCS).
+]]
+
+if CampaignBridge and CampaignBridge.loaded then
+  env.info("[campaign] bridge already loaded; skipping")
+  return
+end
+
+local defaults = {
+  host = "127.0.0.1",
+  port = 7341,
+  poll_interval = 0.1,       -- seconds of model time between network pumps
+  telemetry_interval = 3.0,
+  reconnect_interval = 5.0,
+  connect_timeout = 5.0,
+  max_queue = 5000,          -- unsent sequenced messages kept while disconnected
+  retain = 2000,             -- sent messages kept for replay after a reconnect
+  max_lines = 200,           -- inbound lines handled per pump
+  max_bytes = 256 * 1024,    -- outbound bytes written per pump
+  hit_throttle = 1.0,        -- seconds between forwarded hits on the same target
+}
+
+local cfg = {}
+for k, v in pairs(defaults) do cfg[k] = v end
+for k, v in pairs(CampaignBridgeConfig or {}) do cfg[k] = v end
+
+local function log(msg) env.info("[campaign] " .. msg) end
+local function log_error(msg) env.error("[campaign] " .. msg) end
+
+package.path = package.path .. ";.\\LuaSocket\\?.lua"
+package.cpath = package.cpath .. ";.\\LuaSocket\\?.dll"
+local socket = require("socket")
+
+assert(net and net.lua2json and net.json2lua,
+  "[campaign] net.lua2json/json2lua unavailable in the mission environment")
+
+-- ======================================================================================
+-- Transport. The block between the BEGIN/END markers must be identical in
+-- lua/mission/campaign_bridge.lua and lua/hooks/campaign_hooks.lua (a test checks this).
+-- ======================================================================================
+
+-- BEGIN TRANSPORT
+
+local function new_deque() return { first = 1, last = 0, items = {} } end
+local function dq_size(q) return q.last - q.first + 1 end
+local function dq_push(q, v) q.last = q.last + 1; q.items[q.last] = v end
+local function dq_push_front(q, v) q.first = q.first - 1; q.items[q.first] = v end
+local function dq_pop(q)
+  if q.first > q.last then return nil end
+  local v = q.items[q.first]
+  q.items[q.first] = nil
+  q.first = q.first + 1
+  return v
+end
+
+-- opts: host, port, src, socket, encode, decode, now, log, hello_data(), on_message(msg),
+--       max_queue, retain, reconnect_interval, connect_timeout, max_lines, max_bytes
+local function new_transport(opts)
+  local T = {
+    state = "disconnected",  -- disconnected | connecting | handshake | ready
+    next_attempt = 0, connect_deadline = 0,
+    seq = 0, pending = new_deque(), sent = new_deque(),
+    sock = nil, rx = "", tx = nil, tx_pos = 1, tx_msg = nil,
+  }
+
+  local function line_for(mtype, data, seq, t, extra)
+    local env = { v = 1, type = mtype, src = opts.src, seq = seq, t = t, data = data or {} }
+    if extra then for k, v in pairs(extra) do env[k] = v end end
+    return opts.encode(env) .. "\n"
+  end
+
+  -- Sequenced: queued while disconnected and replayed after reconnect if the server missed it.
+  function T.send(mtype, data, t)
+    T.seq = T.seq + 1
+    dq_push(T.pending, { seq = T.seq, line = line_for(mtype, data, T.seq, t) })
+    if dq_size(T.pending) > opts.max_queue then
+      dq_pop(T.pending)
+      opts.log("send queue full; dropped oldest message")
+    end
+  end
+
+  -- Unsequenced: only sent while connected, never replayed (telemetry, acks).
+  function T.send_volatile(mtype, data, t, extra)
+    if T.state ~= "ready" then return end
+    dq_push(T.pending, { seq = 0, line = line_for(mtype, data, 0, t, extra) })
+  end
+
+  function T.ack(id, ok, result, err)
+    T.send_volatile("ack", {}, nil, { re = id, ok = ok, result = result, error = err })
+  end
+
+  local function disconnect(reason)
+    if T.sock then pcall(function() T.sock:close() end) end
+    T.sock = nil
+    if T.tx_msg and T.tx_msg.seq > 0 then dq_push_front(T.pending, T.tx_msg) end
+    T.tx, T.tx_msg, T.tx_pos, T.rx = nil, nil, 1, ""
+    if T.state == "handshake" or T.state == "ready" then
+      opts.log("disconnected: " .. tostring(reason))
+    end
+    T.state = "disconnected"
+    T.next_attempt = opts.now() + opts.reconnect_interval
+  end
+
+  local function on_connected()
+    T.state = "handshake"
+    T.rx = ""
+    T.tx = line_for("hello", opts.hello_data(), 0, nil)
+    T.tx_pos, T.tx_msg = 1, nil
+    opts.log("connected to " .. opts.host .. ":" .. opts.port)
+  end
+
+  local function on_welcome(last_seq)
+    -- Replay everything the server has not seen, oldest first; drop volatile messages.
+    local q = new_deque()
+    for _, src in ipairs({ T.sent, T.pending }) do
+      for i = src.first, src.last do
+        local m = src.items[i]
+        if m.seq > last_seq then dq_push(q, m) end
+      end
+    end
+    T.sent, T.pending = new_deque(), q
+    T.state = "ready"
+    if dq_size(q) > 0 then opts.log("replaying " .. dq_size(q) .. " messages after seq " .. last_seq) end
+  end
+
+  local function start_connect(now)
+    local s = opts.socket.tcp()
+    if not s then T.next_attempt = now + opts.reconnect_interval; return end
+    s:settimeout(0)
+    pcall(function() s:setoption("tcp-nodelay", true) end)
+    T.sock = s
+    local ok, err = s:connect(opts.host, opts.port)
+    if ok or err == "already connected" then
+      on_connected()
+    elseif err == "timeout" or err == "Operation already in progress" then
+      T.state = "connecting"
+      T.connect_deadline = now + opts.connect_timeout
+    else
+      disconnect(err)
+    end
+  end
+
+  local function check_connecting(now)
+    local _, writable = opts.socket.select(nil, { T.sock }, 0)
+    if writable and writable[1] then
+      if T.sock:getpeername() then on_connected() else disconnect("connect failed") end
+    elseif now > T.connect_deadline then
+      disconnect("connect timeout")
+    end
+  end
+
+  local function pump_recv()
+    for _ = 1, opts.max_lines do
+      local line, err, partial = T.sock:receive("*l", T.rx)
+      if line then
+        T.rx = ""
+        local ok, msg = pcall(opts.decode, line)
+        if not ok or type(msg) ~= "table" then
+          opts.log("undecodable message dropped")
+        elseif msg.type == "welcome" then
+          if T.state == "handshake" then
+            on_welcome(tonumber(type(msg.data) == "table" and msg.data.last_seq) or 0)
+          end
+        elseif T.state == "ready" then
+          local hok, herr = pcall(opts.on_message, msg)
+          if not hok then opts.log("message handler error: " .. tostring(herr)) end
+        end
+      elseif err == "timeout" then
+        T.rx = partial or ""
+        return true
+      else
+        disconnect(err)
+        return false
+      end
+    end
+    return true
+  end
+
+  local function pump_send()
+    local budget = opts.max_bytes
+    while budget > 0 do
+      if not T.tx then
+        if T.state ~= "ready" then return end
+        local m = dq_pop(T.pending)
+        if not m then return end
+        T.tx, T.tx_pos, T.tx_msg = m.line, 1, m
+      end
+      local last, err, partial_last = T.sock:send(T.tx, T.tx_pos)
+      if last then
+        budget = budget - (last - T.tx_pos + 1)
+        if T.tx_msg and T.tx_msg.seq > 0 then
+          dq_push(T.sent, T.tx_msg)
+          if dq_size(T.sent) > opts.retain then dq_pop(T.sent) end
+        end
+        T.tx, T.tx_msg, T.tx_pos = nil, nil, 1
+      elseif err == "timeout" then
+        if partial_last then T.tx_pos = partial_last + 1 end
+        return
+      else
+        disconnect(err)
+        return
+      end
+    end
+  end
+
+  function T.tick()
+    local now = opts.now()
+    if T.state == "disconnected" then
+      if now >= T.next_attempt then start_connect(now) end
+    elseif T.state == "connecting" then
+      check_connecting(now)
+    end
+    if T.state == "handshake" or T.state == "ready" then
+      if pump_recv() then pump_send() end
+    end
+  end
+
+  return T
+end
+-- END TRANSPORT
+
+-- ======================================================================================
+-- Mission state and helpers
+-- ======================================================================================
+
+local B = {
+  loaded = true,
+  -- Wall clock from LuaSocket: model time and math.random repeat across mission restarts.
+  run_id = string.format("%.0f", socket.gettime() * 1000000),
+  spawned = {},     -- campaign group name -> true
+  dead = {},        -- unit/static/scenery name -> true (dedupe DEAD / UNIT_LOST / CRASH)
+  suppressed = {},  -- group name -> true while being despawned (ignore its loss events)
+  hit_last = {},    -- target name -> model time of last forwarded hit
+  left = {},        -- unit name -> model time a player left it (slot change / disconnect)
+  ejected = {},     -- unit name -> true once its pilot ejected
+  menus = {},       -- audience -> { kind, id, path }
+  config = cfg,
+}
+CampaignBridge = B
+
+local function now() return timer.getTime() end
+
+local CATEGORY = { [1] = "unit", [2] = "weapon", [3] = "static", [4] = "base", [5] = "scenery", [6] = "cargo" }
+local SIDES = { neutral = 0, red = 1, blue = 2 }
+local GROUP_CATEGORY = { airplane = 0, helicopter = 1, ground = 2, ship = 3 }
+
+local function pos2(p) return { x = p.x, y = p.z } end          -- DCS vec3 -> model Pos
+local function vec3(p) return { x = p.x, y = 0, z = p.y } end   -- model Pos -> DCS vec3
+
+local function describe(o)
+  if not o then return nil end
+  local d = {}
+  pcall(function()
+    local name = o:getName()
+    d.name = name ~= nil and tostring(name) or nil  -- scenery getName() returns a number
+    d.category = CATEGORY[o:getCategory()]
+    d.type = o:getTypeName()
+    if o.getCoalition then d.coalition = o:getCoalition() end
+    if d.category == "unit" then
+      local g = o:getGroup()
+      if g then d.group = g:getName() end
+      d.player = o:getPlayerName()
+    end
+    local p = o:getPoint()
+    d.pos, d.alt = pos2(p), p.y
+  end)
+  if d.name and not d.group and d.category == "unit" then
+    d.group = d.name:match("^(.-)#%d+$")  -- campaign units encode their group in the name
+  end
+  return d
+end
+
+local function place_name(e)
+  if not e.place then return nil end
+  local ok, name = pcall(function() return e.place:getName() end)
+  return ok and name or nil
+end
+
+local function country_id(c)
+  if type(c) == "number" then return c end
+  local id = country.id[c]
+  if not id then error("unknown country " .. tostring(c)) end
+  return id
+end
+
+local function side_of(name)
+  local s = SIDES[name]
+  if not s then error("unknown coalition " .. tostring(name)) end
+  return s
+end
+
+-- "all" | "coalition:<side>" | "group:<group name>"  ->  kind, id, group_name
+local function parse_audience(a)
+  a = a or "all"
+  if a == "all" then return "all", -1 end
+  local kind, val = a:match("^(%a+):(.+)$")
+  if kind == "coalition" then return "coalition", side_of(val) end
+  if kind == "group" then
+    local g = Group.getByName(val)
+    if not g then error("no such group " .. val) end
+    return "group", g:getID(), val
+  end
+  error("bad audience " .. tostring(a))
+end
+
+-- ======================================================================================
+-- Transport instance
+-- ======================================================================================
+
+local transport = new_transport({
+  host = cfg.host, port = cfg.port, src = "mission", socket = socket,
+  encode = net.lua2json, decode = net.json2lua, now = now, log = log,
+  max_queue = cfg.max_queue, retain = cfg.retain, reconnect_interval = cfg.reconnect_interval,
+  connect_timeout = cfg.connect_timeout, max_lines = cfg.max_lines, max_bytes = cfg.max_bytes,
+  hello_data = function()
+    local spawned = {}
+    for name in pairs(B.spawned) do
+      local g = Group.getByName(name)
+      if g and g:isExist() then spawned[#spawned + 1] = name else B.spawned[name] = nil end
+    end
+    return { proto = 1, run_id = B.run_id, map = env.mission.theatre, spawned = spawned }
+  end,
+  on_message = function(msg) B.on_message(msg) end,
+})
+B.transport = transport
+
+local function emit(kind, data)
+  data = data or {}
+  data.kind = kind
+  transport.send("event", data, now())
+end
+
+-- ======================================================================================
+-- Events: DCS -> engine
+-- ======================================================================================
+
+local E = world.event
+
+-- When a player leaves an aircraft (slot change, spectators, disconnect) DCS removes it and
+-- fires PILOT_DEAD + UNIT_LOST/DEAD right after PLAYER_LEAVE_UNIT (seen on DCS 2.9.31).
+-- Those are reported as unit_removed, not as a kill. Not applied after an ejection: the
+-- abandoned jet then crashes for real.
+local LEAVE_WINDOW = 2.0
+
+local function left_recently(name)
+  local t = name and B.left[name]
+  return t ~= nil and now() - t <= LEAVE_WINDOW
+end
+
+-- Unit names are reused (player slots respawn as the same unit), so per-life state resets on birth.
+local function reset_life(name)
+  if not name then return end
+  B.dead[name], B.left[name], B.ejected[name] = nil, nil, nil
+end
+
+local function report_loss(o)
+  local d = describe(o)
+  if not d or not d.name or B.dead[d.name] then return end
+  if d.group and B.suppressed[d.group] then return end
+  B.dead[d.name] = true
+  if left_recently(d.name) then
+    emit("unit_removed", { unit = d, reason = "player_left" })
+    return
+  end
+  if d.category == "scenery" then
+    emit("scenery_destroyed", { object = d })
+  elseif d.category == "unit" or d.category == "static" then
+    emit("unit_killed", { unit = d })
+  end
+end
+
+local event_map = {
+  [E.S_EVENT_BIRTH] = function(e)
+    local d = describe(e.initiator)
+    if d then reset_life(d.name) end
+    if d and d.category == "unit" then emit("birth", { unit = d, place = place_name(e) }) end
+  end,
+  [E.S_EVENT_TAKEOFF] = function(e) emit("takeoff", { unit = describe(e.initiator), place = place_name(e) }) end,
+  [E.S_EVENT_LAND] = function(e) emit("land", { unit = describe(e.initiator), place = place_name(e) }) end,
+  [E.S_EVENT_ENGINE_SHUTDOWN] = function(e) emit("engine_shutdown", { unit = describe(e.initiator) }) end,
+  [E.S_EVENT_DEAD] = function(e) report_loss(e.initiator) end,
+  [E.S_EVENT_UNIT_LOST] = function(e) report_loss(e.initiator) end,
+  [E.S_EVENT_CRASH] = function(e) report_loss(e.initiator) end,
+  [E.S_EVENT_KILL] = function(e)
+    emit("kill", { killer = describe(e.initiator), victim = describe(e.target), weapon = e.weapon_name })
+  end,
+  [E.S_EVENT_HIT] = function(e)
+    local t = describe(e.target)
+    if not t or not t.name or (t.category ~= "static" and t.category ~= "scenery") then return end
+    local last = B.hit_last[t.name]
+    if last and now() - last < cfg.hit_throttle then return end
+    B.hit_last[t.name] = now()
+    local weapon
+    if e.weapon then pcall(function() weapon = e.weapon:getTypeName() end) end
+    emit("hit", { target = t, shooter = describe(e.initiator), weapon = weapon })
+  end,
+  [E.S_EVENT_EJECTION] = function(e)
+    local d = describe(e.initiator)
+    if d and d.name then B.ejected[d.name] = true end
+    emit("ejection", { unit = d })
+  end,
+  [E.S_EVENT_PILOT_DEAD] = function(e)
+    local d = describe(e.initiator)
+    if d and left_recently(d.name) then return end  -- the player left; nobody died
+    emit("pilot_dead", { unit = d })
+  end,
+  [E.S_EVENT_LANDING_AFTER_EJECTION] = function(e)
+    emit("landing_after_ejection", { unit = describe(e.initiator), place = place_name(e) })
+  end,
+  [E.S_EVENT_PLAYER_ENTER_UNIT] = function(e) emit("player_enter_unit", { unit = describe(e.initiator) }) end,
+  [E.S_EVENT_PLAYER_LEAVE_UNIT] = function(e)
+    local d = describe(e.initiator)
+    if d and d.name and not B.ejected[d.name] and not B.dead[d.name] then B.left[d.name] = now() end
+    emit("player_leave_unit", { unit = d })
+  end,
+}
+
+local handler = {}
+function handler:onEvent(e)
+  local f = event_map[e.id]
+  if not f then return end
+  local ok, err = pcall(f, e)
+  if not ok then log_error("event " .. tostring(e.id) .. " failed: " .. tostring(err)) end
+end
+world.addEventHandler(handler)
+
+-- ======================================================================================
+-- Commands: engine -> DCS
+-- ======================================================================================
+
+local function draw_shape(d)
+  local id = d.id
+  if type(id) ~= "number" then error("draw needs a numeric id") end
+  local kind, aud = parse_audience(d.audience)
+  local color = d.color or { 1, 1, 1, 1 }
+  local fill = d.fill or { 0, 0, 0, 0 }
+  local line_type = d.line_type or 1
+  local read_only = d.read_only ~= false
+  local message = d.message or ""
+  trigger.action.removeMark(id)  -- draw replaces an existing shape with the same id
+
+  local shape = d.shape
+  if shape == "mark" then
+    if kind == "all" then
+      trigger.action.markToAll(id, d.text or "", vec3(d.pos), read_only, message)
+    elseif kind == "coalition" then
+      trigger.action.markToCoalition(id, d.text or "", vec3(d.pos), aud, read_only, message)
+    else
+      trigger.action.markToGroup(id, d.text or "", vec3(d.pos), aud, read_only, message)
+    end
+    return
+  end
+  if kind == "group" then error("shape " .. tostring(shape) .. " cannot target a group") end
+  if shape == "line" then
+    trigger.action.lineToAll(aud, id, vec3(d.from), vec3(d.to), color, line_type, read_only, message)
+  elseif shape == "circle" then
+    trigger.action.circleToAll(aud, id, vec3(d.center), d.radius, color, fill, line_type, read_only, message)
+  elseif shape == "rect" then
+    trigger.action.rectToAll(aud, id, vec3(d.from), vec3(d.to), color, fill, line_type, read_only, message)
+  elseif shape == "text" then
+    trigger.action.textToAll(aud, id, vec3(d.pos), color, fill, d.font_size or 14, read_only, d.text or "")
+  elseif shape == "poly" then
+    local args = { 7, aud, id }
+    for _, p in ipairs(d.points or {}) do args[#args + 1] = vec3(p) end
+    if #args < 6 then error("poly needs at least 3 points") end
+    args[#args + 1] = color
+    args[#args + 1] = fill
+    args[#args + 1] = line_type
+    args[#args + 1] = read_only
+    args[#args + 1] = message
+    trigger.action.markupToAll(unpack(args))
+  else
+    error("unknown shape " .. tostring(shape))
+  end
+end
+
+local function menu_selected(arg)
+  local ok, err = pcall(emit, "menu_select", { key = arg.key, audience = arg.audience, group = arg.group })
+  if not ok then log_error("menu_select failed: " .. tostring(err)) end
+end
+
+local function menu_add_sub(kind, id, label, parent)
+  if kind == "all" then return missionCommands.addSubMenu(label, parent) end
+  if kind == "coalition" then return missionCommands.addSubMenuForCoalition(id, label, parent) end
+  return missionCommands.addSubMenuForGroup(id, label, parent)
+end
+
+local function menu_add_cmd(kind, id, label, parent, arg)
+  if kind == "all" then return missionCommands.addCommand(label, parent, menu_selected, arg) end
+  if kind == "coalition" then return missionCommands.addCommandForCoalition(id, label, parent, menu_selected, arg) end
+  return missionCommands.addCommandForGroup(id, label, parent, menu_selected, arg)
+end
+
+local function menu_remove(m)
+  pcall(function()
+    if m.kind == "all" then missionCommands.removeItem(m.path)
+    elseif m.kind == "coalition" then missionCommands.removeItemForCoalition(m.id, m.path)
+    else missionCommands.removeItemForGroup(m.id, m.path) end
+  end)
+end
+
+local function menu_build(kind, id, parent, items, audience, gname)
+  for _, it in ipairs(items or {}) do
+    if it.items then
+      local sub = menu_add_sub(kind, id, it.label, parent)
+      menu_build(kind, id, sub, it.items, audience, gname)
+    else
+      menu_add_cmd(kind, id, it.label, parent, { key = it.key, audience = audience, group = gname })
+    end
+  end
+end
+
+local commands = {}
+
+function commands.spawn_group(d)
+  local cat = GROUP_CATEGORY[d.category]
+  if not cat then error("unknown group category " .. tostring(d.category)) end
+  local gt = d.group
+  if type(gt) ~= "table" or not gt.name then error("spawn_group needs group.name") end
+  local existing = Group.getByName(gt.name)
+  if existing and existing:isExist() then error("group " .. gt.name .. " already exists") end
+  for _, u in ipairs(gt.units or {}) do
+    if u.name then B.dead[u.name] = nil end  -- names are reused across respawns
+  end
+  local g = coalition.addGroup(country_id(d.country), cat, gt)
+  if not g then error("addGroup failed for " .. gt.name) end
+  B.spawned[g:getName()] = true
+  local units = {}
+  for _, u in ipairs(g:getUnits()) do units[#units + 1] = u:getName() end
+  return { group = g:getName(), units = units }
+end
+
+function commands.despawn_group(d)
+  local g = Group.getByName(d.group)
+  B.spawned[d.group] = nil
+  if not g or not g:isExist() then return { survivors = {}, gone = true } end
+  local survivors, alive, pos = {}, {}, nil
+  for _, u in ipairs(g:getUnits()) do
+    if u:isExist() and u:getLife() > 0 then
+      local t = u:getTypeName()
+      survivors[t] = (survivors[t] or 0) + 1
+      alive[#alive + 1] = u:getName()
+      if not pos then pos = pos2(u:getPoint()) end
+    end
+  end
+  local name = d.group
+  -- Group:destroy() fired no events on DCS 2.9.31; suppression is a guard in case that changes.
+  B.suppressed[name] = true
+  g:destroy()
+  timer.scheduleFunction(function() B.suppressed[name] = nil end, nil, now() + 5)
+  return { survivors = survivors, alive = alive, pos = pos }
+end
+
+function commands.spawn_static(d)
+  local st = d.static
+  if type(st) ~= "table" or not st.name then error("spawn_static needs static.name") end
+  B.dead[st.name] = nil
+  local o = coalition.addStaticObject(country_id(d.country), st)
+  if not o then error("addStaticObject failed for " .. st.name) end
+  return { name = o:getName() }
+end
+
+function commands.remove_static(d)
+  local o = StaticObject.getByName(d.name)
+  if o and o:isExist() then
+    B.dead[d.name] = true  -- removal is not a kill
+    o:destroy()
+    return { removed = true }
+  end
+  return { removed = false }
+end
+
+local function controller_of(name)
+  local g = Group.getByName(name)
+  if not g or not g:isExist() then error("no such group " .. tostring(name)) end
+  return g:getController()
+end
+
+function commands.set_route(d)
+  controller_of(d.group):setTask({ id = "Mission", params = { route = { points = d.points } } })
+end
+
+function commands.set_task(d)
+  local c = controller_of(d.group)
+  if d.push then c:pushTask(d.task) else c:setTask(d.task) end
+end
+
+function commands.draw(d) draw_shape(d) end
+
+local SMOKE = { green = 0, red = 1, white = 2, orange = 3, blue = 4 }
+
+-- Coloured smoke on the ground at pos. DCS smoke lasts about 5 minutes.
+function commands.smoke(d)
+  local color = SMOKE[d.color or "red"]
+  if not color then error("unknown smoke color " .. tostring(d.color)) end
+  local p = { x = d.pos.x, y = 0, z = d.pos.y }
+  p.y = land.getHeight({ x = p.x, y = p.z })
+  trigger.action.smoke(p, color)
+end
+
+function commands.undraw(d)
+  local ids = d.ids or { d.id }
+  for _, id in ipairs(ids) do trigger.action.removeMark(id) end
+end
+
+function commands.message(d)
+  local kind, id = parse_audience(d.audience)
+  local dur, clear = d.duration or 10, d.clear == true
+  if kind == "all" then trigger.action.outText(d.text, dur, clear)
+  elseif kind == "coalition" then trigger.action.outTextForCoalition(id, d.text, dur, clear)
+  else trigger.action.outTextForGroup(id, d.text, dur, clear) end
+end
+
+-- Replaces the menu tree rooted at d.root for this audience. Empty items removes it.
+-- Coalition and "all" menus cannot tell who clicked; use group menus for per-player actions.
+function commands.menu(d)
+  local audience = d.audience or "all"
+  local old = B.menus[audience]
+  if old then menu_remove(old); B.menus[audience] = nil end
+  if not d.items or #d.items == 0 then return end
+  local kind, id, gname = parse_audience(audience)
+  local root = menu_add_sub(kind, id, d.root or "Campaign", nil)
+  B.menus[audience] = { kind = kind, id = id, path = root }
+  menu_build(kind, id, root, d.items, audience, gname)
+end
+
+function commands.warehouse_set(d)
+  local ab = Airbase.getByName(d.airbase)
+  if not ab then error("no such airbase " .. tostring(d.airbase)) end
+  local wh = ab:getWarehouse()
+  -- setItem accepts any string (unknown names land in the weapon section), and
+  -- Unit.getDescByName returns a desc even for bogus names, but with category 4 rather than
+  -- 0 (airplane) / 1 (helicopter). Verified on DCS 2.9.31. Weapons cannot be validated here.
+  local unknown = {}
+  for item in pairs(d.aircraft or {}) do
+    local ok, desc = pcall(Unit.getDescByName, item)
+    if not (ok and desc and (desc.category == 0 or desc.category == 1)) then unknown[#unknown + 1] = item end
+  end
+  if #unknown > 0 then error("unknown aircraft type(s): " .. table.concat(unknown, ", ")) end
+  for item, count in pairs(d.aircraft or {}) do wh:setItem(item, count) end
+  for item, count in pairs(d.weapons or {}) do wh:setItem(item, count) end
+  for liquid, amount in pairs(d.liquids or {}) do wh:setLiquidAmount(tonumber(liquid), amount) end
+end
+
+function commands.query(d)
+  if d.what == "time" then
+    return { model = timer.getTime(), abs = timer.getAbsTime() }
+  elseif d.what == "group" then
+    local g = Group.getByName(d.group)
+    if not g or not g:isExist() then return { exists = false } end
+    local units = {}
+    for _, u in ipairs(g:getUnits()) do
+      units[#units + 1] = { name = u:getName(), type = u:getTypeName(), life = u:getLife(), pos = pos2(u:getPoint()) }
+    end
+    return { exists = true, units = units }
+  elseif d.what == "airbase" then
+    local ab = Airbase.getByName(d.airbase)
+    if not ab then return { exists = false } end
+    local p = ab:getPoint()
+    return { exists = true, name = ab:getName(), pos = pos2(p), alt = p.y,
+             coalition = ab:getCoalition(), category = ab:getDesc().category }
+  elseif d.what == "heights" then
+    -- Terrain elevation (m) for each {x, y} in d.points, in order; e.g. for waypoint elevations.
+    local out = {}
+    for i, p in ipairs(d.points or {}) do out[i] = land.getHeight({ x = p.x, y = p.y }) end
+    return { heights = out }
+  end
+  error("unknown query " .. tostring(d.what))
+end
+
+function B.on_message(msg)
+  if msg.type ~= "cmd" then return end
+  local d = type(msg.data) == "table" and msg.data or {}
+  local f = commands[d.op]
+  if not f then
+    transport.ack(msg.id, false, nil, "unknown op " .. tostring(d.op))
+    return
+  end
+  local ok, res = pcall(f, d)
+  if ok then transport.ack(msg.id, true, res) else transport.ack(msg.id, false, nil, tostring(res)) end
+end
+
+-- ======================================================================================
+-- Telemetry and main loop
+-- ======================================================================================
+
+local function unit_state(u)
+  local d = describe(u)
+  pcall(function()
+    local p = u:getPosition()
+    local hdg = math.deg(math.atan2(p.x.z, p.x.x))
+    if hdg < 0 then hdg = hdg + 360 end
+    d.hdg = hdg
+    local v = u:getVelocity()
+    d.spd = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+  end)
+  return d
+end
+
+local function telemetry()
+  local players, groups = {}, {}
+  for _, side in ipairs({ coalition.side.RED, coalition.side.BLUE }) do
+    for _, u in ipairs(coalition.getPlayers(side) or {}) do
+      if u:isExist() then players[#players + 1] = unit_state(u) end
+    end
+  end
+  for name in pairs(B.spawned) do
+    local g = Group.getByName(name)
+    if g and g:isExist() then
+      local u = g:getUnit(1)
+      groups[#groups + 1] = { id = name, pos = u and pos2(u:getPoint()) or nil, alive = g:getSize() }
+    else
+      B.spawned[name] = nil
+    end
+  end
+  transport.send_volatile("telemetry", { players = players, groups = groups }, now())
+end
+
+local next_telemetry = 0
+local function tick(_, t)
+  local ok, err = pcall(function()
+    if transport.state == "ready" and t >= next_telemetry then
+      next_telemetry = t + cfg.telemetry_interval
+      telemetry()
+    end
+    transport.tick()
+  end)
+  if not ok then log_error("tick failed: " .. tostring(err)) end
+  return t + cfg.poll_interval
+end
+
+timer.scheduleFunction(tick, nil, timer.getTime() + 1)
+log("bridge loaded (run " .. B.run_id .. ")")
