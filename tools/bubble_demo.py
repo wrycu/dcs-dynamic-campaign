@@ -30,7 +30,7 @@ from campaign.persist import Snapshot
 from campaign.protocol import PREFIX_GROUND, Envelope, Hello, Src, as_list, parse_dcs_name
 from campaign.settings import SettingsError, bubble_config, load_bubble_config
 from campaign.spawner import GroundSpawner
-from tools import demo_save
+from tools import demo_save, ghosts
 from tools.build_test_missions import AIRBASE_NAME, AIRBASE_XY
 
 # (id, side, role, composition, nm north of the airbase, nm east)
@@ -55,8 +55,10 @@ SIDE_COLOR = {Side.RED: [1, 0.15, 0.15, 1], Side.BLUE: [0.2, 0.45, 1, 1]}
 
 class Demo:
     def __init__(self, airbase: str, cfg: BubbleConfig, magvar: float = 5.0,
-                 dtc_dir: Path | None = None, snap: Snapshot | None = None) -> None:
+                 dtc_dir: Path | None = None, snap: Snapshot | None = None,
+                 ghost_specs: list[str] = ()) -> None:
         self.airbase = airbase
+        self.ghosts = ghosts.Ghosts(list(ghost_specs), magvar)
         self.dtc_dir = dtc_dir
         self.magvar = magvar  # degrees east; magnetic = true - magvar
         self.players: list[dict] = []
@@ -96,6 +98,12 @@ class Demo:
             self.spawner.on_hello(hello, new_run)
         finally:
             self.quiet = False
+        if self.ghosts:
+            try:
+                for line in await self.ghosts.setup(conn.call):
+                    print(line, flush=True)
+            except BridgeError as e:
+                print(f"ghosts: {e}", flush=True)
         if not self.state.ground_units:
             ab = await conn.call("query", {"what": "airbase", "airbase": self.airbase})
             if not ab or not ab.get("exists"):
@@ -136,7 +144,7 @@ class Demo:
     def on_message(self, conn: Connection, env: Envelope) -> None:
         if env.type == "telemetry":
             self.players = [p for p in as_list(env.data.get("players")) if isinstance(p, dict)]
-            self.spawner.on_telemetry(env.data)
+            self.spawner.on_telemetry(self.ghosts.inject(env.data))
             self._bg(self.tick())
         elif env.type == "event":
             kind = env.data.get("kind")
@@ -346,6 +354,7 @@ async def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7341)
     demo_save.add_args(ap, "bubble")
+    ghosts.add_args(ap)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     demo_defaults = {"ground_spawn_nm": 8, "ground_despawn_nm": 10, "sam_spawn_margin_nm": 5,
@@ -362,7 +371,7 @@ async def main() -> None:
           f"SAM range + {cfg.threat_spawn_margin / M_PER_NM:.1f} / + {cfg.threat_despawn_margin / M_PER_NM:.1f} nm", flush=True)
     saver = demo_save.DemoSave(args.save, fresh=args.new)
     snap = saver.load()
-    demo = Demo(args.airbase, cfg, args.magvar, args.dtc_dir, snap)
+    demo = Demo(args.airbase, cfg, args.magvar, args.dtc_dir, snap, args.ghost)
     if snap:
         print(demo.status_text(), flush=True)
     if args.airbase == AIRBASE_NAME:

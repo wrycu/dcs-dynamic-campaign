@@ -11,6 +11,7 @@ params.lua returns a table:
   airdrome_id     warehouse airport to make BLUE with limited aircraft (munitions unlimited)
   player_x, player_y  where to move the player group (DCS map coords), or nil
   player_alt      altitude for the player group's units and waypoints (m), or nil
+  clients         true: player aircraft become Client slots (for a multiplayer server)
 ]]
 
 local params = dofile(arg[1])
@@ -117,6 +118,13 @@ end
 
 local players = player_groups()
 assert(#players > 0, "template has no Client/Player aircraft")
+if params.clients then
+  for _, g in ipairs(players) do
+    for _, u in pairs(g.units) do
+      if u.skill == "Player" then u.skill = "Client" end
+    end
+  end
+end
 if params.player_x and params.player_y then
   for _, g in ipairs(players) do
     local u1 = g.units[1]

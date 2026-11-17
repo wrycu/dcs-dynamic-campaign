@@ -366,3 +366,103 @@ Times are approximate; they follow the AI's cruise speed of about 430 kt.
 - The whole terminal output, or at least the lines starting with `MSG`, `event`, `FLIGHTS`, `scenario`, `WARNING` and `ERROR`.
 - For each air spawn (step 2, step 5 if you did it, step 6): the time, your range when it happened, and whether the jets appeared at the marker, at a sensible altitude and heading, and flew on normally.
 - The step 3 takeoff time, and anything that spawned or vanished when it shouldn't have.
+
+## Run 8: dedicated server (`campaign-server.miz` + `tools.smoke_server`, then `tools.flight_bubble_demo`)
+
+Proof P1 in the [roadmap](roadmap.md): does everything work on a dedicated server with you as an ordinary remote client? The server is a separate Linux machine running DCS under Wine/Proton; the engine runs **on the server** too, so the bridge and Hooks still connect to `127.0.0.1` and nothing campaign-related is exposed to the network. About 45 minutes.
+
+With one person, two players far apart are stood in for by **ghost players**: fixed points the engine treats as extra players (`--ghost BRG/NM` from Khalkhalah, `--ghost <airbase>`, or `--ghost far` for Blue Ferry's base in this demo). They show on the F10 map as yellow `GHOST n` text.
+
+Time acceleration isn't available on a server, so this run doesn't wait for Red Ferry to leave the map.
+
+### One-time setup
+
+Paths on the **server** (set to match it):
+```bash
+SDCS="<server>/drive_c/Program Files/Eagle Dynamics/DCS World"    # its DCS install
+SSG="<server>/drive_c/users/<user>/Saved Games/DCS.server"        # its Saved Games: the folder with Config/serverSettings.lua
+REPO="$HOME/dcs-dynamic-campaign"                                 # where the repo goes on the server
+```
+
+1. **Copy the repo to the server** (from your PC, in the repo root). Nothing is committed yet, so copy rather than clone; re-run after code changes:
+   ```bash
+   rsync -a --exclude .git --exclude .idea --exclude build ./ <server>:dcs-dynamic-campaign/
+   ```
+2. **On the server:** Python 3.11 or newer, and the tests pass:
+   ```bash
+   cd "$REPO" && python3 --version && python3 -m unittest -q
+   ```
+3. **On the server:** let missions load LuaSocket, as in the one-time setup above but on the server's install:
+   ```bash
+   cp "$SDCS/Scripts/MissionScripting.lua" "$SDCS/Scripts/MissionScripting.lua.orig"
+   sed -i "s/^\(\s*\)_G\['require'\] = nil/\1--_G['require'] = nil/; s/^\(\s*\)_G\['package'\] = nil/\1--_G['package'] = nil/" \
+     "$SDCS/Scripts/MissionScripting.lua"
+   grep -n "_G\['require'\]\|_G\['package'\]" "$SDCS/Scripts/MissionScripting.lua"   # both lines start with --
+   ```
+4. **On the server:** install the Hooks script, then restart the DCS server (Hooks load at DCS start):
+   ```bash
+   mkdir -p "$SSG/Scripts/Hooks" && cp "$REPO/lua/hooks/campaign_hooks.lua" "$SSG/Scripts/Hooks/"
+   grep -n "CAMPAIGN" "$SSG/Logs/dcs.log"   # after the restart: "campaign hooks loaded"
+   ```
+5. **On your PC:** build the server mission, pointing its loader at the repo's path on the server (absolute, as the server sees it), and copy it over:
+   ```bash
+   python3 -m tools.build_test_missions --server /home/<user>/dcs-dynamic-campaign
+   scp build/campaign-server.miz "<server>:$SSG/Missions/"
+   ```
+   `campaign-server.miz` is `campaign-smoke.miz` with the FA-18C as a **Client** slot and the bridge loaded from the server's copy of the repo. The loader line printed must show the server's path.
+6. **Server settings** (web GUI or `serverSettings.lua`): add `campaign-server.miz` to the mission list. Pausing is fine (the war pauses with the mission), but note what it's set to: paused until a client joins, or running.
+
+Run the engine on the server in `tmux` (or `screen`), so it survives your SSH session, and keep a log with `tee`.
+
+### Part A: slot gating (`tools.smoke_server`)
+On a dedicated server you're an ordinary client, so this is the first real test of `onPlayerTryChangeSlot`.
+
+1. On the server: `cd "$REPO" && python3 -m tools.smoke_server 2>&1 | tee run8a.log`
+2. Start (or restart) `campaign-server.miz` on the server. Expect `HELLO mission ...` in the terminal.
+3. On your PC: MULTIPLAYER → connect to the server's address. Stay in **spectators**. Expect:
+   - `HELLO hooks ...`
+   - `SLOT TEST: blue is now BLOCKED`
+4. Pick the blue FA-18C slot. Expect it to be **refused**, the chat message "That side is AI-only in this campaign.", a `hooks player ... slot_denied` line, then `SLOT TEST: denial worked; blue is ALLOWED again`.
+5. Pick the slot again. Expect to get in, and a `hooks player ... player_slot` line with `unit_type`.
+6. ✅ Pass: the slot was refused once, then allowed. Disconnect, and stop the smoke server with Ctrl+C.
+
+### Part B: bubbles, ghosts, joining and leaving (`tools.flight_bubble_demo`)
+Same scenario as Run 7 (Red Ferry, Blue Ferry, Blue CAS), plus two ghosts:
+- **GHOST 1** at `000/35`, on Red Ferry's orbit, 35 nm north of Khalkhalah.
+- **GHOST 2** at `far`, on Blue Ferry's base about 100 nm away.
+
+**Setup**
+1. On the server:
+   ```bash
+   cd "$REPO" && python3 -m tools.flight_bubble_demo --new --ghost 000/35 --ghost far 2>&1 | tee run8b.log
+   ```
+2. On your PC, fetch the cartridge it wrote: `scp "<server>:dcs-dynamic-campaign/build/dtc/campaign_flights.dtc" "$SG/DTC/"`. Waypoints as in Run 7 (WP2 = Red Ferry's orbit = GHOST 1).
+3. Restart `campaign-server.miz` on the server. Expect `HELLO mission`, `GHOST 1 (000/35) placed`, `GHOST 2 (far) placed` and the `scenario: far base <name>` line.
+
+**Steps**
+1. **Join as a spectator; ghosts at work (T+0:00 to T+2:00).** Connect, stay in spectators, open the F10 map.
+   - Both `GHOST` labels are on the map: one 35 nm north of Khalkhalah, one on the far base.
+   - `Red Ferry: took off (not in DCS)`, then within about 30 s **`Red Ferry: spawned`**, although no real player is anywhere near: GHOST 1 is within 30 nm. Its marker turns `[DCS]`.
+   - At T+1:00, **`Blue Ferry: spawned`** on the **ramp at the far base** (GHOST 2 is there), followed by `event ... takeoff` lines in the terminal within about 5 minutes. A ramp start at a base other than Khalkhalah hasn't been tried in DCS before; if it fails, send the error.
+   - Once Blue Ferry is more than 40 nm from both ghosts and you (about 10 minutes after takeoff), expect `Blue Ferry: aggregated in the air`.
+   - ✅ Pass: flights spawned around the ghosts while you were nowhere near; you see the markers from your client.
+2. **Take the FA-18C slot.** Load `campaign_flights.dtc` if the briefing offers it (or from the jet's DTC page), then fly to WP1 as in Run 7.
+   - Status (F10 > Other > Campaign) works and shows your bearing and range to Khalkhalah.
+   - At T+5:00, **Blue CAS** ramp-starts at Khalkhalah (you're within 30 nm): you should see two Hornets on the ramp, taxiing and taking off. This checks that what the server spawns reaches your client.
+   - Fly towards Red Ferry (WP2): the two MiGs should be visible on radar and visually at the marker.
+3. **Leave and rejoin.** Go back to spectators for 2 minutes, then take the slot again.
+   - While you're out, nothing near GHOST 1 leaves DCS. Things near only you may leave once they're beyond 40 nm of everyone; the Hornets on the ground at Khalkhalah stay.
+   - On rejoining, Status works again.
+4. **Client crash.** While flying, kill your DCS client (Alt+F4, or kill the process). The server and engine keep running; in the terminal, no errors. Reconnect and take the slot again.
+5. **Engine restart.** On the server, Ctrl+C the demo, then start it again **without** `--new`, same ghosts:
+   ```bash
+   python3 -m tools.flight_bubble_demo --ghost 000/35 --ghost far 2>&1 | tee -a run8b.log
+   ```
+   Expect `HELLO mission ... new_run=False`, the flights still in DCS kept (no duplicates, no respawns), and the clock carrying on.
+6. **Mission restart.** Restart the mission from the server (web GUI). Expect `new_run=True`: flights that were in DCS come back where the engine had them, the ghosts are drawn again, and the clock carries on from where it was.
+
+### What to send back
+- `run8a.log` and `run8b.log` from the server (`scp "<server>:dcs-dynamic-campaign/run8*.log" .`).
+- Part A: was the slot refused, then allowed?
+- Part B: for each step, pass or what happened instead. In particular: did Blue Ferry's ramp start at the far base work, and did you see Blue CAS on the ramp and Red Ferry on radar from your client?
+- The server's `dcs.log` if anything failed (`$SSG/Logs/dcs.log`; the `[campaign]` and `CAMPAIGN` lines).

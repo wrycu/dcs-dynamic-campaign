@@ -1,7 +1,9 @@
 """In-game test of the flight bubble: AI flights exist in DCS only near players, and fly their
 routes in the engine everywhere else.
 
-    python3 -m tools.flight_bubble_demo [--air-spawn 30] [--air-despawn 40] [--new]
+    python3 -m tools.flight_bubble_demo [--air-spawn 30] [--air-despawn 40] [--new] [--ghost ...]
+
+``--ghost`` adds a ghost player (see tools/ghosts.py); ``--ghost far`` puts one on Blue Ferry's base.
 
 Then start build/campaign-smoke.miz. The scenario starts on the first connection; times are on
 the campaign clock, which runs with DCS model time (time acceleration works):
@@ -38,7 +40,7 @@ from campaign.model import (CampaignState, Flight, FlightState, GroundOrder, Gro
 from campaign.persist import Snapshot
 from campaign.protocol import PREFIX_GROUND, Envelope, Hello, Src, as_list, parse_dcs_name
 from campaign.settings import SettingsError, bubble_config, load_bubble_config
-from tools import demo_save
+from tools import demo_save, ghosts
 from tools.build_test_missions import AIRBASE_XY
 
 M_PER_FT = 0.3048
@@ -68,8 +70,10 @@ def ft(n: float) -> float:
 
 
 class Demo:
-    def __init__(self, cfg: BubbleConfig, magvar: float, snap: Snapshot | None) -> None:
+    def __init__(self, cfg: BubbleConfig, magvar: float, snap: Snapshot | None,
+                 ghost_specs: list[str] = ()) -> None:
         self.cfg = cfg
+        self.ghosts = ghosts.Ghosts(list(ghost_specs), magvar)
         self.magvar = magvar
         self.state = snap.state if snap else CampaignState(theater_map="Syria", clock=0.0, sides={})
         self.conn: Connection | None = None
@@ -236,6 +240,15 @@ class Demo:
         if not await self.find_bases():
             print(f"airbase {HOME} not found", flush=True)
             return
+        if self.ghosts:
+            for g in self.ghosts.ghosts:  # "far": Blue Ferry's base, chosen at runtime
+                if g.pos is None and g.spec.lower() == "far":
+                    g.spec = self.far_base() or g.spec
+            try:
+                for line in await self.ghosts.setup(conn.call):
+                    print(line, flush=True)
+            except BridgeError as e:
+                print(f"ghosts: {e}", flush=True)
         if not self.state.flights:
             self.create_scenario()
         if new_run:
@@ -254,7 +267,7 @@ class Demo:
         if env.type == "telemetry":
             self.players = [p for p in as_list(env.data.get("players")) if isinstance(p, dict)]
             exits = self.air.on_telemetry(env.data)
-            self.bubble.on_telemetry(env.t, env.data)
+            self.bubble.on_telemetry(env.t, self.ghosts.inject(env.data))
             self._bg(self.tick(exits))
         elif env.type == "event":
             kind = env.data.get("kind")
@@ -351,6 +364,7 @@ async def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7341)
     demo_save.add_args(ap, "flight_bubble")
+    ghosts.add_args(ap)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
@@ -363,7 +377,7 @@ async def main() -> None:
     write_cartridge(args.dtc_dir)
     saver = demo_save.DemoSave(args.save, fresh=args.new)
     snap = saver.load()
-    demo = Demo(cfg, args.magvar, snap)
+    demo = Demo(cfg, args.magvar, snap, args.ghost)
     bridge = Bridge(demo.on_message, demo.on_hello, demo.on_disconnect, host=args.host, port=args.port)
     saver.restore_runs(bridge)
     await bridge.start()

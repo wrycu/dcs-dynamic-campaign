@@ -41,8 +41,12 @@ def lua_str(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
-def wine_roots() -> list[str]:
-    """Candidate Z:\\ paths for the repo; Fedora Atomic has /home -> /var/home."""
+def wine_roots(repo_path: str | None = None) -> list[str]:
+    """Candidate Z:\\ paths for the repo; Fedora Atomic has /home -> /var/home.
+
+    ``repo_path`` is where the repo is on the machine that runs DCS, if that isn't this one."""
+    if repo_path:
+        return ["Z:" + repo_path.rstrip("/").replace("/", "\\") + "\\"]
     paths = {str(ROOT.resolve()), str(ROOT)}
     home, real_home = os.path.expanduser("~"), os.path.realpath(os.path.expanduser("~"))
     for p in list(paths):
@@ -51,8 +55,8 @@ def wine_roots() -> list[str]:
     return sorted("Z:" + p.replace("/", "\\") + "\\" for p in paths)
 
 
-def loader(rel_path: str, preamble: str = "") -> str:
-    roots = ", ".join(f"[[{r}]]" for r in wine_roots())
+def loader(rel_path: str, preamble: str = "", repo_path: str | None = None) -> str:
+    roots = ", ".join(f"[[{r}]]" for r in wine_roots(repo_path))
     rel = rel_path.replace("/", "\\")
     return f"""{preamble}local rel = [[{rel}]]
 local roots = {{ {roots} }}
@@ -70,7 +74,8 @@ trigger.action.outText("LOADER FAILED: could not load " .. rel .. " (see dcs.log
 """
 
 
-def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, comment: str) -> Path:
+def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, comment: str,
+          repo_path: str | None = None, clients: bool = False) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
         with zipfile.ZipFile(template) as z:
@@ -83,12 +88,13 @@ def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, 
             f"mission_out = {lua_str(str(tmpd / 'mission'))}",
             f"warehouses_in = {lua_str(str(tmpd / 'in' / 'warehouses'))}",
             f"warehouses_out = {lua_str(str(tmpd / 'warehouses'))}",
-            f"loader = {lua_str(loader(rel_script, preamble))}",
+            f"loader = {lua_str(loader(rel_script, preamble, repo_path))}",
             f"comment = {lua_str(comment)}",
             f"airdrome_id = {AIRDROME_ID}",
             f"player_x = {AIRBASE_XY[0] - 8000}",  # 8 km south of the airbase
             f"player_y = {AIRBASE_XY[1]}",
             "player_alt = 3000",
+            f"clients = {'true' if clients else 'false'}",
         ]) + "\n}\n")
         r = subprocess.run(["luajit", str(PATCHER), str(params)], capture_output=True, text=True)
         if r.returncode != 0:
@@ -113,9 +119,17 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE)
     ap.add_argument("--out", type=Path, default=ROOT / "build")
+    ap.add_argument("--server", metavar="REPO_PATH",
+                    help="instead, build campaign-server.miz for a dedicated server: the bridge is loaded from "
+                         "the repo checkout at REPO_PATH on the server, and player aircraft are Client slots")
     args = ap.parse_args()
     if not shutil.which("luajit"):
         raise SystemExit("luajit is required")
+    if args.server:
+        server = build(args.template, args.out, "campaign-server.miz", "lua/mission/campaign_bridge.lua", "",
+                       "Load campaign bridge", args.server, clients=True)
+        print(f"wrote {server}\nrepo roots tried by the loader: {wine_roots(args.server)}")
+        return
     probe = build(args.template, args.out, "campaign-probe.miz", "lua/devtools/probe.lua",
                   f'ProbeConfig = {{ airbase = "{AIRBASE_NAME}", known_scenery_id = "{TOWER_SCENERY_ID}" }}\n',
                   "Load campaign API probe")
