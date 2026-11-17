@@ -8,7 +8,7 @@ params.lua returns a table:
   mission_in, mission_out, warehouses_in, warehouses_out  file paths
   loader          Lua source run by a MISSION START "DO SCRIPT" trigger
   comment         trigger comment
-  airdrome_id     warehouse airport to make BLUE with limited aircraft/munitions
+  airdrome_id     warehouse airport to make BLUE with limited aircraft (munitions unlimited)
   player_x, player_y  where to move the player group (DCS map coords), or nil
   player_alt      altitude for the player group's units and waypoints (m), or nil
 ]]
@@ -142,7 +142,7 @@ local ap = warehouses.airports and warehouses.airports[params.airdrome_id]
 assert(ap, "warehouses has no airport " .. tostring(params.airdrome_id))
 ap.coalition = "BLUE"
 ap.unlimitedAircrafts = false
-ap.unlimitedMunitions = false
+ap.unlimitedMunitions = true  -- AI ramp starts take weapons from stock; we don't track munitions yet
 write_table(params.warehouses_out, "warehouses", warehouses)
 
-print(string.format("patched: %d player group(s), airport %d BLUE/limited", #players, params.airdrome_id))
+print(string.format("patched: %d player group(s), airport %d BLUE, limited aircraft", #players, params.airdrome_id))

@@ -129,12 +129,22 @@ class FlightState(Enum):
     LOST = auto()
 
 
+class StartMode(Enum):
+    AIR = auto()        # spawned airborne at its first waypoint (or where it was aggregated)
+    RUNWAY = auto()     # on the runway, engines running
+    RAMP_HOT = auto()   # parked, engines running
+    RAMP_COLD = auto()  # parked, cold; may be held uncontrolled until told to start
+
+
 @dataclass
 class Waypoint:
     pos: Pos
     alt_m: float
     tot: float | None = None   # campaign seconds
-    action: str | None = None  # "ATTACK", "ORBIT", "REFUEL", ...
+    # What the flight does here; see campaign/flight_spawn.py for the supported actions:
+    # None (fly through), "ORBIT", "CAS", "SEAD", "BOMB", "EXIT" (leave the map), "LAND".
+    action: str | None = None
+    params: dict = field(default_factory=dict)  # per action, e.g. {"duration_s": 1200, "radius_m": 9000}
 
 
 @dataclass
@@ -149,9 +159,18 @@ class Flight:
     waypoints: list[Waypoint]
     takeoff_time: float
     state: FlightState = FlightState.PLANNED
+    start: StartMode = StartMode.AIR
     # Offered to players first; if unclaimed at the claim deadline, AI flies it or it is cancelled.
     player_preferred: bool = False
     pos: Pos | None = None  # abstract position while aggregated
+    # Last known airborne state, used to respawn the flight where it was aggregated.
+    alt_m: float | None = None
+    hdg: float | None = None   # degrees true
+    speed_ms: float | None = None
+    fuel: float = 1.0          # internal fuel fraction of the emptiest aircraft
+    next_wp: int = 0           # index into waypoints of the next one to fly to
+    # Campaign clock time an ORBIT at waypoints[next_wp] ends, once the flight is there.
+    hold_until: float | None = None
     spawn: SpawnState = SpawnState.AGGREGATED
     dcs_group: str | None = None
     player_seats: dict[int, str | None] = field(default_factory=dict)  # seat -> pilot id

@@ -46,6 +46,7 @@ class Op:
     REMOVE_STATIC = "remove_static"
     SET_ROUTE = "set_route"
     SET_TASK = "set_task"
+    SET_COMMAND = "set_command"
     DRAW = "draw"
     UNDRAW = "undraw"
     SMOKE = "smoke"

@@ -43,6 +43,11 @@ class BubbleConfig:
     max_units: int = 300              # live campaign ground vehicles in DCS
     max_spawns_per_tick: int = 4      # spread spawns out to avoid frame hitches
     lookahead_s: float = 60.0         # project observers along their velocity
+    # AI flights (campaign/air_bubble.py). Fighters see and shoot far, so these are much larger.
+    air_spawn: float = 60 * NM
+    air_despawn: float = 80 * NM
+    air_min_dwell: float = 120.0      # seconds a flight spawned in DCS stays there at least
+    max_flights: int = 12             # campaign AI flights in DCS at once
 
     def __post_init__(self) -> None:
         if self.ground_spawn <= 0 or self.threat_spawn_margin < 0:
@@ -51,6 +56,10 @@ class BubbleConfig:
             raise ValueError("ground despawn distance must be at least the spawn distance")
         if self.threat_despawn_margin < self.threat_spawn_margin:
             raise ValueError("air-defence despawn margin must be at least the spawn margin")
+        if self.air_spawn <= 0:
+            raise ValueError("air spawn distance must be positive")
+        if self.air_despawn < self.air_spawn:
+            raise ValueError("air despawn distance must be at least the air spawn distance")
 
 
 @dataclass

@@ -9,8 +9,9 @@ Grey = aggregated (only data), red/blue = spawned in DCS. Fly in and out of the 
 Every spawn, despawn and loss is also shown as an in-game message, and F10 > Other >
 Campaign > Status lists every formation with its distance from you.
 
-Campaign state lives in this process, so restarting the mission (not this script) respawns
-formations with whatever losses they took: kill two tanks, restart, and they stay dead.
+The campaign is saved to build/saves/bubble.json (every 5 s while something changes, and on
+exit) and loaded at startup, so losses survive restarting the mission, this script, or both.
+--new starts over; the previous save is kept as bubble.json.1.
 """
 from __future__ import annotations
 
@@ -25,9 +26,11 @@ from campaign.bridge import Bridge, BridgeError, Connection
 from campaign.bubble import BubbleConfig, despawn_radius, spawn_radius, strength
 from campaign.dtc import DtcWaypoint, hornet_dtc, write_dtc
 from campaign.model import CampaignState, GroundOrder, GroundRole, GroundUnit, Pos, Side, SpawnState
+from campaign.persist import Snapshot
 from campaign.protocol import PREFIX_GROUND, Envelope, Hello, Src, as_list, parse_dcs_name
 from campaign.settings import SettingsError, bubble_config, load_bubble_config
 from campaign.spawner import GroundSpawner
+from tools import demo_save
 from tools.build_test_missions import AIRBASE_NAME, AIRBASE_XY
 
 # (id, side, role, composition, nm north of the airbase, nm east)
@@ -52,7 +55,7 @@ SIDE_COLOR = {Side.RED: [1, 0.15, 0.15, 1], Side.BLUE: [0.2, 0.45, 1, 1]}
 
 class Demo:
     def __init__(self, airbase: str, cfg: BubbleConfig, magvar: float = 5.0,
-                 dtc_dir: Path | None = None) -> None:
+                 dtc_dir: Path | None = None, snap: Snapshot | None = None) -> None:
         self.airbase = airbase
         self.dtc_dir = dtc_dir
         self.magvar = magvar  # degrees east; magnetic = true - magvar
@@ -60,12 +63,14 @@ class Demo:
         self.nav_target: str | None = None
         self.nav_task: asyncio.Task[Any] | None = None
         self.cfg = cfg
-        self.state = CampaignState(theater_map="", clock=0.0, sides={})
+        self.state = snap.state if snap else CampaignState(theater_map="", clock=0.0, sides={})
         self.conn: Connection | None = None
         self.spawner = GroundSpawner(self.state, self._call, cfg, on_change=self._on_change)
+        if snap:
+            self.spawner.restore(snap.extra.get("ground") or {})
         self.draw_ids = {f[0]: 1000 + 10 * i for i, f in enumerate(FORMATIONS)}
         self.tasks: set[asyncio.Task[Any]] = set()
-        self.last_state: dict[str, SpawnState] = {}
+        self.last_state: dict[str, SpawnState] = {u.id: u.spawn for u in self.state.ground_units.values()}
         self.smoke_tasks: dict[str, asyncio.Task[Any]] = {}
         self.quiet = False
 
@@ -340,6 +345,7 @@ async def main() -> None:
     ap.add_argument("--max-units", type=int)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7341)
+    demo_save.add_args(ap, "bubble")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     demo_defaults = {"ground_spawn_nm": 8, "ground_despawn_nm": 10, "sam_spawn_margin_nm": 5,
@@ -354,14 +360,20 @@ async def main() -> None:
         raise SystemExit(f"bad settings: {e}")
     print(f"bubble: ground spawn {cfg.ground_spawn / M_PER_NM:.1f} nm / despawn {cfg.ground_despawn / M_PER_NM:.1f} nm, "
           f"SAM range + {cfg.threat_spawn_margin / M_PER_NM:.1f} / + {cfg.threat_despawn_margin / M_PER_NM:.1f} nm", flush=True)
-    demo = Demo(args.airbase, cfg, args.magvar, args.dtc_dir)
+    saver = demo_save.DemoSave(args.save, fresh=args.new)
+    snap = saver.load()
+    demo = Demo(args.airbase, cfg, args.magvar, args.dtc_dir, snap)
+    if snap:
+        print(demo.status_text(), flush=True)
     if args.airbase == AIRBASE_NAME:
         # Write the cartridge now so it can be loaded from the briefing, before the mission connects.
         demo.save_cartridge("Syria", Pos(*AIRBASE_XY))
     bridge = Bridge(demo.on_message, demo.on_hello, demo.on_disconnect, host=args.host, port=args.port)
+    saver.restore_runs(bridge)
     await bridge.start()
     print(f"listening on {args.host}:{bridge.port}; waiting for DCS", flush=True)
-    await asyncio.Event().wait()
+    async with saver.running(bridge, lambda: (demo.state, {"ground": demo.spawner.export()})):
+        await asyncio.Event().wait()
 
 
 if __name__ == "__main__":

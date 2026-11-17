@@ -23,6 +23,10 @@ BUBBLE_KEYS: dict[str, tuple[str, float]] = {
     "max_units": ("max_units", 1),
     "max_spawns_per_tick": ("max_spawns_per_tick", 1),
     "lookahead_s": ("lookahead_s", 1.0),
+    "air_spawn_nm": ("air_spawn", NM),
+    "air_despawn_nm": ("air_despawn", NM),
+    "air_min_dwell_s": ("air_min_dwell", 1.0),
+    "max_flights": ("max_flights", 1),
 }
 
 

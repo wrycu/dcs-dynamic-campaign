@@ -31,7 +31,7 @@ mkdir -p "$SG/Missions/campaign-dev"
 cp build/campaign-*.miz "$SG/Missions/campaign-dev/"
 ```
 
-- Both missions come from your `a2a.miz`: Syria, an FA-18C at about 10,000 ft, about 4–5 nm south of Khalkhalah, and Khalkhalah set to blue with a limited warehouse.
+- Both missions come from your `a2a.miz`: Syria, an FA-18C at about 10,000 ft, about 4–5 nm south of Khalkhalah, and Khalkhalah set to blue with limited aircraft (munitions unlimited).
 - Each mission's only trigger loads its Lua straight from this repo through Wine's `Z:` drive. **Editing the Lua only needs a mission restart.** You only rebuild and copy if the builder itself changes.
 
 ## Run 1: API probe (`campaign-probe.miz`)
@@ -185,3 +185,184 @@ The demo also writes `campaign_bubble_seq.dtc`: the same points as route sequenc
 If the import fails or the waypoints are wrong:
 - Check `dcs.log` for errors mentioning DTC or JSON.
 - In the same DTC window, make a cartridge by hand with two waypoints and **Export** it, e.g. as `reference.dtc`. Send it to me so I can match the exact format your DCS writes.
+
+## Run 5: AI flights (`campaign-smoke.miz` + `tools.air_demo`)
+
+Single player, about 45 minutes. Time acceleration is fine while you wait; the scripts keep working. Distances are nm, altitudes ft, bearings magnetic.
+
+This run answers the questions that decide how the campaign handles AI flights:
+- Do air-started flights fly their route and fight?
+- Do ramp starts work, both hot and cold-held-then-started?
+- Do AI ramp spawns take aircraft out of the airbase warehouse, and does landing put them back?
+- Do we get the takeoff, landing, engine-shutdown and loss events needed to collect a flight once it's home?
+- Can an airborne flight be taken out of DCS and put back where it was?
+
+### Setup
+```bash
+python3 -m tools.air_demo        # not the bubble demo; only one can listen on the port
+```
+Start `build/campaign-smoke.miz`. You don't need a cartridge for this run. Everything is in **F10 > Other > Campaign**: **Spawn**, **Control**, **Warehouse** and **Status**. Status lists every flight with its state, aircraft count, bearing and range from you, altitude and fuel, plus how many aircraft each squadron has ready.
+
+A red target group (4 BTRs) sits 12 nm north of Khalkhalah for the CAS flight.
+
+**The red CAP is armed and will attack you.** It engages anything within about 32 nm of its route, which runs from 40 nm north of the field to 20 nm north. Your jet only has a gun, so keep more than 35 nm from it (check Status) unless you want to test that.
+
+### Steps
+1. **Warehouse baseline.** Warehouse > **Hornet count at the field**. Note the number; it may well be 0.
+2. **Hot ramp start.** Spawn > **Blue CAS**. Then:
+   - If it fails, note the message (for example, no free parking or an empty warehouse). Then use Warehouse > **Stock 4 Hornets** and spawn again.
+   - When it spawns, a warehouse message follows. **Did the count drop by 2?**
+   - Orbit the field and watch: two Hornets start on the ramp, taxi and take off. Expect `took off` within about 5 minutes and note how long it took.
+   - They fly to the BTRs 12 nm north. Expect `Target group lost a BTR-80`.
+   - They come back and land. Expect `landed`, then `recovered: 2 aircraft back to the squadron` once both have shut down, and another warehouse message. **Did the count go back up?**
+3. **Cold start, held.** Spawn > **Blue cold start, held**.
+   - Two Hornets should appear parked and stay cold. Check on the F10 map or fly past.
+   - After a minute, Control > **Start the held flight**. Expect a cold start-up, taxi and takeoff; note how long until `took off`.
+   - They orbit 5 nm northwest of the field for 5 minutes, then land.
+4. **Air-to-air.** Stay south of the field.
+   - Spawn > **Blue CAP**: two Hornets appear over the field at 18,000 ft and orbit 10 nm north.
+   - Spawn > **Red CAP**: two MiG-29s appear 40 nm north at 20,000 ft.
+   - Expect a fight 10–25 nm north of the field, with messages such as `lost MiG-29A: 1 left`.
+   - A side that loses its last aircraft is reported `destroyed`.
+   - The blue CAP lands at Khalkhalah when its orbit ends.
+5. **Out of DCS and back.** If the red CAP from step 4 is gone, spawn another.
+   - Wait until Status shows it at least 10 nm from where it appeared.
+   - Control > **Take the red CAP out of DCS**. The message gives its altitude and fuel, and the jets vanish from the F10 map.
+   - Wait about 30 seconds, then Control > **Put the red CAP back**. They should reappear at the same place, heading and altitude, and carry on with the route.
+   - **Watch for** a stall or sudden drop right after respawning, a wrong heading, or fuel that doesn't match.
+   - Known limitation: they come back with a full weapon load.
+6. **Leaving the map.** A red CAP that survives its 15-minute orbit flies 80 nm north. When it gets there, expect `left the map: 2 aircraft back to the squadron`. Skip this if you're short on time.
+
+### What to send back
+- The terminal lines starting with `MSG`, `event`, `parking` and `WARNING`.
+- The warehouse numbers from steps 1–2, and the takeoff times from steps 2–3.
+- Any `failed` message, and anything the AI did that looked wrong: stuck taxiing, taking off from the wrong place, never attacking, or landing somewhere else.
+
+## Run 6: save and load (`campaign-smoke.miz` + `tools.bubble_demo`)
+
+Single player, about 20 minutes. The same layout and cartridge as Run 3. This run checks that losses survive three kinds of restart:
+- restarting the Python script while the mission keeps running;
+- restarting the mission;
+- restarting both.
+
+Both demos save to `build/saves/<demo>.json` every 5 s while something changes, and when you stop them with Ctrl-C. They load that file at startup. `--new` starts over; the old save is kept as `<demo>.json.1`.
+
+### Setup
+```bash
+python3 -m tools.bubble_demo --new --dtc-dir "$HOME/Games/dcs-world/drive_c/users/tim/Saved Games/DCS/DTC"
+```
+Start `build/campaign-smoke.miz` and load the cartridge as in Run 3. The terminal prints `SAVE new campaign`.
+
+### Steps
+1. **Take losses.** Fly to WP2 (near1, 3 nm north of the field) and destroy 2 of its 4 vehicles with the gun. F10 > Other > Campaign > **Status** should show near1 with 2 vehicles. Stay within 5 nm of near1 from here on, so it stays spawned.
+2. **Restart the script while the mission runs.**
+   - In the terminal, press Ctrl-C. Expect `SAVE saved ...`.
+   - **While it's stopped**, destroy a third near1 vehicle. DCS queues that event.
+   - Start the demo again with the same command, **without** `--new`. Expect:
+     - `SAVE loaded ...`, then a status list with near1 at 2;
+     - `mission connected ... resuming after seq N` (not `new run`);
+     - the queued kill arrives once, and near1 drops to 1.
+   - near1 must **not** respawn or duplicate: no `spawned near1` line, and its last vehicle hasn't moved.
+3. **Restart the mission.** In DCS, restart the mission and load the cartridge again. Expect a `new run` line in the terminal. Fly back to WP2: near1 should spawn with **1 vehicle**.
+4. **Restart both.**
+   - Quit the mission to the main menu. Press Ctrl-C in the terminal.
+   - Start the demo again, then the mission.
+   - Status should still show near1 at 1, and every other formation unchanged.
+5. **Start over.** Ctrl-C, then start the demo with `--new`. near1 is back to 4. `build/saves/bubble.json.1` holds the previous campaign.
+
+**Optional, AI flights (Run 5 setup, `python3 -m tools.air_demo`):**
+- Stock 4 Hornets and spawn **Blue CAS**.
+- While it taxis, press Ctrl-C and start `python3 -m tools.air_demo` again.
+- The flight should carry on without being respawned. Expect `took off`, the attack, `landed`, then `recovered: 2 aircraft back to the squadron`.
+- Status should show the squadron count back up.
+
+### What to send back
+- The terminal lines starting with `SAVE`, `HELLO`, `mission connected`, `spawned` and `despawned`, plus any `WARNING` or `ERROR` lines.
+- The near1 count after each step.
+- Anything that respawned or doubled when it shouldn't have.
+
+## Run 7: flight bubble (`campaign-smoke.miz` + `tools.flight_bubble_demo`)
+
+Single player, about 35 minutes (less with time acceleration). Only the Hornet's gun is needed; nothing in this run shoots at you. In this demo, AI flights **spawn within 30 nm of you** and **leave DCS beyond 40 nm**, but only after at least 1 minute in DCS.
+
+### Setup
+1. Start the demo. It writes `campaign_flights.dtc` straight into your DTC folder:
+   ```bash
+   python3 -m tools.flight_bubble_demo --new --dtc-dir "$HOME/Games/dcs-world/drive_c/users/tim/Saved Games/DCS/DTC"
+   ```
+   Note the `scenario: far base <name> (<n> nm from Khalkhalah)` line. That's where Blue Ferry comes from.
+2. Start `build/campaign-smoke.miz`. In the briefing, load `campaign_flights.dtc` (as in Run 4), press FLY, then MENU → **MUMI** → **WYPT**. The waypoints:
+
+   | WP | Where | Used for |
+   |---|---|---|
+   | 1 | 8 nm north of Khalkhalah | where you watch Red Ferry spawn |
+   | 2 | 35 nm north of Khalkhalah: **Red Ferry's orbit** | HSI range to WP2 = range to Red Ferry while it orbits |
+   | 3 | Khalkhalah | |
+   | 4 | 10 nm south of Khalkhalah (45 nm from WP2) | where you hold while Red Ferry is out of DCS |
+
+3. You start about 4–5 nm south of Khalkhalah at about 10,000 ft. The mission clock starts at **T+0:00**. Status shows the campaign time as `T+h:mm:ss`.
+
+**Where to look:**
+- **F10 map:** a text marker for every flight, at the position the engine has for it: `[DCS]` = in DCS, `[engine]` = only the engine is flying it.
+- **F10 > Other > Campaign > Status:** your bearing and range to Khalkhalah, then for each flight its state, magnetic bearing and range from you, altitude, and any orbit time left. Messages appear on screen and in the terminal.
+
+### The scenario
+| Flight | Plan | Armed? |
+|---|---|---|
+| **Red Ferry** | 2 MiG-29A. Takes off off-map at T+0:00, starting 60 nm north of the field at 20,000 ft. Flies south to WP2 (arriving about T+3:30) and orbits there for 15 min (until about T+18:30). Then flies 55 nm north and leaves the map (about T+26). | No, and weapons hold |
+| **Blue Ferry** | 2 F/A-18C from the far base. Takes off at T+1:00 and flies to Khalkhalah to land. | No |
+| **Blue CAS** | 2 F/A-18C, hot ramp start at Khalkhalah at T+5:00. Attacks the 4 BTRs 12 nm north of the field at 12,000 ft, then lands at Khalkhalah. | Yes, at ground targets only |
+
+Times are approximate; they follow the AI's cruise speed of about 430 kt.
+
+### Steps
+**1. Takeoffs without DCS (T+0:00 to T+1:00).** Don't move yet.
+- Within a few seconds of the mission starting, expect the message `Red Ferry: took off (not in DCS)`.
+- F10 map: the `Red Ferry [engine] 20k ft` marker is 60 nm north of the field. Check it again after 30 s: it should have moved south about 3.5 nm.
+- Status: `Red Ferry: 2x ENROUTE [engine] 355M ~64 nm 20,000 ft`.
+- At about T+1:00, expect `Blue Ferry: took off (not in DCS)`, and a `Blue Ferry [engine]` marker appears over the far base.
+- ✅ Pass: both took off without any jets appearing in DCS, and their markers move.
+
+**2. Red Ferry spawns as you close (about T+1:00 to T+4:00).**
+- Steer to **WP1**: about 355°M, 12–13 nm. Fly at 10,000 ft and about 350 KIAS, then orbit WP1.
+- Check Status every 30 s or so. When Red Ferry's range drops below **30 nm**, around T+3:00, expect `Red Ferry: spawned`. Its marker changes to `[DCS]`.
+- Check:
+  - Status shows it at about **20,000 ft**, and later `orbiting ~15 min more` once it reaches WP2.
+  - On the radar (RWS, 40 nm scale, nose north), there are 2 contacts about 27–30 nm north, high.
+  - On the F10 map, the two MiG icons are at the marker.
+- ✅ Pass: they appear where the marker was and fly on normally: no stall, dive or sudden turn.
+
+**3. Blue CAS ramp start (T+5:00 to about T+12:00).** Keep orbiting WP1 at 10,000 ft. You're 8 nm from the field, so inside 30 nm.
+- At T+5:00, expect `Blue CAS: spawned`. Two Hornets appear on the ramp at Khalkhalah (F10 map).
+- Within about 5 minutes: `Blue CAS: took off from Khalkhalah`. They fly north past you to the BTRs, 4 nm north of WP1, and you'll see `Target group lost a BTR-80` messages.
+- Note the time of `took off`.
+- ✅ Pass: it started in DCS on the ramp, not as an engine-only takeoff.
+
+**4. Red Ferry leaves DCS when you leave (about T+8:00 to T+12:00).**
+- Steer to **WP4**: about 175°M, 18 nm. Watch the **range to WP2** on the HSI or in the UFC.
+- When it passes **40 nm** (about 5 nm south of the field), expect `Red Ferry: aggregated in the air` within a few seconds. The MiGs vanish from the F10 map, and the marker stays at WP2 as `[engine]`.
+- Orbit WP4. Check Status twice, a minute apart: Red Ferry's `orbiting N min more` should go down by 1.
+- ✅ Pass: it left DCS at about 40 nm, not before, and its orbit timer kept running.
+
+**5. Red Ferry comes back, then leaves again (optional, about 5 min).**
+- Fly back toward WP1. When the WP2 range drops below **30 nm**, expect `Red Ferry: spawned` again, still orbiting at WP2, with the same orbit time left as Status showed.
+- Return to WP4. It leaves DCS again past 40 nm.
+
+**6. Blue Ferry arrives (about T+10:00 to T+25:00).** Hold at WP4, or anywhere within about 10 nm of the field.
+- Watch Blue Ferry in Status. When it's within **30 nm** of you, expect `Blue Ferry: spawned`: two clean Hornets in the air, heading for Khalkhalah at about 12,000–20,000 ft.
+- Then expect `Blue Ferry: landed at Khalkhalah`. After they taxi in and shut down, which can take up to 10 minutes, expect `Blue Ferry: recovered: 2 aircraft back to the squadron`.
+- Status: `Blue Hornets (<far base>): 8 ready`.
+- Blue CAS lands the same way, and its squadron goes back to 8.
+- ✅ Pass: Blue Ferry spawned in the air on its way in, landed, and was recovered.
+
+**7. Time acceleration, and leaving the map without DCS (about T+18:30 to T+26:00).** Stay at WP4.
+- Note the T+ time in Status, then press **Ctrl+Z** twice for ×4 (Shift+Z returns to normal).
+- One real minute later, Status should show about 4 minutes more.
+- After about T+18:30, the Red Ferry marker starts moving north from WP2.
+- At about T+26, expect `Red Ferry: left the map (not in DCS): 2 aircraft back to the squadron`, and `Red MiG-29s (off map): 8 ready`.
+- ✅ Pass: the clock and markers sped up ×4, and Red Ferry finished its route without being spawned.
+
+### What to send back
+- The whole terminal output, or at least the lines starting with `MSG`, `event`, `FLIGHTS`, `scenario`, `WARNING` and `ERROR`.
+- For each air spawn (step 2, step 5 if you did it, step 6): the time, your range when it happened, and whether the jets appeared at the marker, at a sensible altitude and heading, and flew on normally.
+- The step 3 takeoff time, and anything that spawned or vanished when it shouldn't have.

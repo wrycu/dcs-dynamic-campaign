@@ -10,7 +10,7 @@ Each mission has one MISSION START "DO SCRIPT" that loadfile()s the script strai
 through Wine's Z: drive, so editing the Lua only needs a mission restart, not a rebuild.
 
 The template's player aircraft is moved over the probe airbase, and that airbase's warehouse is
-made BLUE with limited aircraft and munitions. Requires luajit.
+made BLUE with limited aircraft (munitions stay unlimited). Requires luajit.
 """
 from __future__ import annotations
 

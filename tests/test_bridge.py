@@ -57,6 +57,8 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         await self.bridge.close()
 
     async def on_message(self, conn, env):
+        if getattr(self, "gate", None) is not None:
+            await self.gate.wait()
         self.messages.append(env)
         self.got_message.set()
 
@@ -65,6 +67,18 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             while not predicate():
                 await asyncio.sleep(0.01)
         await asyncio.wait_for(loop(), TIMEOUT)
+
+    async def test_run_state_counts_only_handled_messages(self):
+        self.gate = asyncio.Event()
+        c = FakeClient()
+        await c.connect(self.bridge.port)
+        await c.send(MsgType.EVENT, {"kind": "takeoff"}, seq=1)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.bridge.run_state(Src.MISSION), ("run-1", 0))  # received, handler still running
+        self.gate.set()
+        await self.wait_for(lambda: self.messages)
+        await self.wait_for(lambda: self.bridge.run_state(Src.MISSION) == ("run-1", 1))
+        await c.close()
 
     async def test_welcome_and_events_in_order(self):
         c = FakeClient()

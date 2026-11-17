@@ -57,7 +57,7 @@ The engine is authoritative. The Lua side holds almost no state. It forwards eve
 - The mission client generates a new one on every mission load. The hooks client generates one per DCS process.
 - A new `run_id` means the client's sequence restarts at 1. For the mission, it also means everything previously spawned is gone.
 
-**Engine restarts:** persist `bridge.run_state(src)` alongside the campaign snapshot. Call `bridge.restore_run(...)` on startup, so a client resuming the same run doesn't replay events whose effects are already in the snapshot.
+**Engine restarts:** persist `bridge.run_state(src)` alongside the campaign snapshot. Call `bridge.restore_run(...)` on startup, so a client resuming the same run doesn't replay events whose effects are already in the snapshot. `run_state` reports the last message whose handler has *finished*, not just the last received, so a save never claims an event it hasn't applied. `campaign/persist.py` does all of this; see `docs/saves.md`.
 
 ## Handshake
 
@@ -106,8 +106,10 @@ Each event's `data.kind` is one of the following. Unit and object descriptors lo
 ### `telemetry` (every 3 s)
 ```json
 {"players":[{"name":"...","player":"Viper","group":"...","type":"F-16C_50","pos":{...},"alt":6100,"hdg":270,"spd":230}],
- "groups":[{"id":"gu:2f9a","pos":{...},"alive":9}]}
+ "groups":[{"id":"gu:2f9a","pos":{...},"alive":9},
+           {"id":"fl:cap1","pos":{...},"alive":2,"alt":6100,"hdg":10,"spd":220,"fuel":0.71,"in_air":true}]}
 ```
+`groups` covers every campaign group the bridge spawned. Aircraft groups also carry the lead's `alt` (m), `hdg` (degrees true), `spd` (m/s), `fuel` (fraction) and `in_air`.
 
 ## hooks → engine
 
@@ -136,23 +138,26 @@ From Python: `await bridge.call("mission", "despawn_group", {"group": "gu:2f9a"}
 
 | op | data | result |
 |---|---|---|
-| `spawn_group` | `category` (`airplane`, `helicopter`, `ground` or `ship`), `country` (id or `country.id` name), `group` (a full DCS group table; `name` required) | `{group, units}` |
+| `spawn_group` | `category` (`airplane`, `helicopter`, `ground` or `ship`), `country` (id or `country.id` name), `group` (a full DCS group table; `name` required) | `{group, units}`. Fails if DCS created no units, which is what a ramp or runway start does when the airbase warehouse has none of the type |
 | `despawn_group` | `group` | `{survivors: {type: count}, alive: [unit names], pos}`, or `{survivors: {}, gone: true}` |
 | `spawn_static` | `country`, `static` (a DCS static table; `name` required) | `{name}` |
 | `remove_static` | `name` | `{removed}` |
 | `set_route` | `group`, `points` (DCS route points) | – |
 | `set_task` | `group`, `task`, `push?` | – |
+| `set_command` | `group`, `command` (a DCS command table, e.g. `{"id": "Start", "params": {}}` to start an uncontrolled flight) | – |
 | `draw` | `id` (number, owned by the engine), `audience`, `shape`, plus the shape's fields (see below) | – |
 | `undraw` | `id`, or `ids` | – |
 | `smoke` | `pos`, `color?` (`red`, `green`, `white`, `orange` or `blue`; default `red`). Smoke lasts about 5 min. | – |
 | `message` | `audience`, `text`, `duration?` (10), `clear?` | – |
 | `menu` | `audience`, `root?` ("Campaign"), `items` | – |
 | `warehouse_set` | `airbase`, `aircraft?: {type: n}`, `weapons?: {type: n}`, `liquids?: {"0": tons}`. Aircraft types are validated (unknown type → error); weapon names cannot be validated in DCS, so the engine must keep its own catalog. | – |
-| `query` | `what`: `time`; `group` with `group`; `airbase` with `airbase`; `heights` with `points` (list of `{x, y}`) | Depends on the query; `heights` returns `{heights: [m, …]}` in point order |
+| `query` | `what`: `time`; `group` with `group`; `airbase` with `airbase`; `heights` with `points` (list of `{x, y}`); `parking` with `airbase`, `free_only?`; `warehouse` with `airbase`, `types` | Depends on the query: `airbase` returns `{exists, name, id, pos, alt, coalition, category}`; `heights` returns `{heights: [m, …]}` in point order; `parking` returns `{spots: [{term, type, pos, dist_rw, occupied}]}` (`term` is the `Term_Index` a ramp start's unit `parking` takes); `warehouse` returns `{counts: {type: n}}` |
 
 Notes on `spawn_group` and `despawn_group`:
 - `spawn_group` refuses a name that is already alive. Silent replacement would orphan the old group.
 - When a group despawns, `despawn_group`'s `survivors` is the authoritative strength. Reconcile `GroundUnit.composition` from it.
+- For aircraft, `despawn_group` also returns the lead's `alt` (m), `hdg` (degrees true) and `spd` (m/s), the lowest `fuel` fraction in the group, and `ammo` (`{weapon type: count}` summed over the group), so a flight can be respawned where it was.
+- In an aircraft unit's `payload`, `pylons` may be keyed by strings (JSON objects always are); the bridge converts them to pylon numbers. A unit's table `callsign` (`{1: name index, 2: flight, 3: unit, name}`) gets the same conversion. `fuel_fraction` (0–1) is converted to kilograms from the type's `fuelMassMax`.
 
 **Draw shapes:**
 

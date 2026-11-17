@@ -55,6 +55,26 @@ class GroundSpawner:
         self.orphans: set[str] = set()                    # DCS group names to remove
         self._tick_lock = asyncio.Lock()
 
+    # ---------- save / load ----------
+
+    def export(self) -> dict[str, Any]:
+        """Bookkeeping for spawned formations, for the save file. Times are stored relative to now."""
+        now = self.clock()
+        return {
+            "age": {k: now - t for k, t in self.spawned_at.items()},
+            "engaged_for": {k: t - now for k, t in self.engaged_until.items() if t > now},
+            "unit_types": self.unit_types,
+            "dead": {k: sorted(v) for k, v in self.dead.items()},
+        }
+
+    def restore(self, data: dict[str, Any]) -> None:
+        """Undo ``export`` after a load, before the mission reconnects."""
+        now = self.clock()
+        self.spawned_at = {k: now - float(a) for k, a in (data.get("age") or {}).items()}
+        self.engaged_until = {k: now + float(r) for k, r in (data.get("engaged_for") or {}).items()}
+        self.unit_types = {k: dict(v) for k, v in (data.get("unit_types") or {}).items()}
+        self.dead = {k: set(v) for k, v in (data.get("dead") or {}).items()}
+
     # ---------- inputs ----------
 
     def on_hello(self, hello: Hello, new_run: bool) -> None:

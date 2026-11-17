@@ -16,3 +16,10 @@ min_dwell_s = 90          # a fresh spawn stays at least this long
 max_units = 300           # live campaign ground vehicles in DCS
 max_spawns_per_tick = 4   # spread spawns out to avoid frame hitches
 lookahead_s = 60          # also spawn around where each player will be this far ahead
+
+# AI flights exist in DCS while a player is within these distances (or a ramp start's base is);
+# beyond them they fly their routes in the engine only.
+air_spawn_nm = 60
+air_despawn_nm = 80
+air_min_dwell_s = 120     # a flight spawned in DCS stays at least this long
+max_flights = 12          # campaign AI flights in DCS at once

@@ -51,7 +51,8 @@ DisconnectHandler = Callable[["Connection"], Awaitable[None] | None]
 @dataclass
 class _RunState:
     run_id: str
-    last_seq: int = 0
+    last_seq: int = 0   # highest seq received (dedupe, and what welcome reports)
+    applied: int = 0    # highest seq whose handler has finished (what a save may claim)
 
 
 async def _maybe_await(value: Any) -> None:
@@ -165,9 +166,13 @@ class Bridge:
         await asyncio.gather(*self._client_tasks, return_exceptions=True)
 
     def run_state(self, src: str) -> tuple[str, int] | None:
-        """(run_id, last_seq) seen for a source. Persist it with the campaign snapshot."""
+        """(run_id, seq) for a source: the last sequenced message whose handler has finished.
+
+        Persist it with the campaign snapshot. Messages received but not yet handled are not
+        included, so after a restart the client replays them.
+        """
         run = self._runs.get(src)
-        return (run.run_id, run.last_seq) if run else None
+        return (run.run_id, run.applied) if run else None
 
     def restore_run(self, src: str, run_id: str, last_seq: int) -> None:
         """Seed run state after an engine restart, before clients reconnect.
@@ -175,7 +180,7 @@ class Bridge:
         Without this, a client resuming the same run would replay messages whose effects
         are already in the restored snapshot.
         """
-        self._runs[src] = _RunState(run_id, last_seq)
+        self._runs[src] = _RunState(run_id, last_seq, last_seq)
 
     def connected(self, src: str) -> bool:
         conn = self.connections.get(src)
@@ -260,7 +265,7 @@ class Bridge:
                         log.warning("%s seq gap: expected %d, got %d",
                                     src, run.last_seq + 1, msg.seq)
                     run.last_seq = msg.seq
-                queue.put_nowait(("msg", msg))
+                queue.put_nowait(("msg", msg, run))
         except (ConnectionError, OSError) as e:
             log.info("%s connection error: %s", src, e)
         finally:
@@ -283,6 +288,10 @@ class Bridge:
                     if self._on_hello:
                         await _maybe_await(self._on_hello(conn, item[1], item[2]))
                 else:
-                    await _maybe_await(self._on_message(conn, item[1]))
+                    try:
+                        await _maybe_await(self._on_message(conn, item[1]))
+                    finally:
+                        if item[1].seq:  # a failed handler is not retried either way
+                            item[2].applied = max(item[2].applied, item[1].seq)
             except Exception:
                 log.exception("handler failed for %s message", conn.src)

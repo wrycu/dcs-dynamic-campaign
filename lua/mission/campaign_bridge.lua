@@ -523,6 +523,19 @@ local function menu_build(kind, id, parent, items, audience, gname)
   end
 end
 
+local function unit_state(u)
+  local d = describe(u)
+  pcall(function()
+    local p = u:getPosition()
+    local hdg = math.deg(math.atan2(p.x.z, p.x.x))
+    if hdg < 0 then hdg = hdg + 360 end
+    d.hdg = hdg
+    local v = u:getVelocity()
+    d.spd = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+  end)
+  return d
+end
+
 local commands = {}
 
 function commands.spawn_group(d)
@@ -534,12 +547,39 @@ function commands.spawn_group(d)
   if existing and existing:isExist() then error("group " .. gt.name .. " already exists") end
   for _, u in ipairs(gt.units or {}) do
     if u.name then B.dead[u.name] = nil end  -- names are reused across respawns
+    if type(u.callsign) == "table" then
+      -- Western callsign {1=name index, 2=flight, 3=unit, name=...}: JSON made the numeric keys strings.
+      local cs = {}
+      for k, v in pairs(u.callsign) do cs[tonumber(k) or k] = v end
+      u.callsign = cs
+    end
+    local pl = u.payload
+    if type(pl) == "table" then
+      -- JSON object keys arrive as strings; DCS wants pylons keyed by pylon number.
+      local pylons = {}
+      for k, v in pairs(pl.pylons or {}) do pylons[tonumber(k) or k] = v end
+      pl.pylons = pylons
+      if pl.fuel_fraction ~= nil then
+        local desc = Unit.getDescByName(u.type)
+        if desc and desc.fuelMassMax then pl.fuel = pl.fuel_fraction * desc.fuelMassMax end
+        pl.fuel_fraction = nil
+      end
+    end
   end
   local g = coalition.addGroup(country_id(d.country), cat, gt)
   if not g then error("addGroup failed for " .. gt.name) end
-  B.spawned[g:getName()] = true
   local units = {}
-  for _, u in ipairs(g:getUnits()) do units[#units + 1] = u:getName() end
+  for _, u in ipairs(g:getUnits() or {}) do
+    if u:isExist() then units[#units + 1] = u:getName() end
+  end
+  if #units == 0 then
+    -- DCS creates the group but no aircraft when a ramp/runway start's airbase warehouse is short of the type.
+    pcall(function() g:destroy() end)
+    local t = gt.units and gt.units[1] and gt.units[1].type or "?"
+    error("DCS created no units for " .. gt.name .. " (for a ramp or runway start: is there " .. t ..
+      " in the airbase warehouse?)")
+  end
+  B.spawned[g:getName()] = true
   return { group = g:getName(), units = units }
 end
 
@@ -548,12 +588,25 @@ function commands.despawn_group(d)
   B.spawned[d.group] = nil
   if not g or not g:isExist() then return { survivors = {}, gone = true } end
   local survivors, alive, pos = {}, {}, nil
+  local air = g:getCategory() == Group.Category.AIRPLANE or g:getCategory() == Group.Category.HELICOPTER
+  local fuel, ammo, state = nil, {}, nil
   for _, u in ipairs(g:getUnits()) do
     if u:isExist() and u:getLife() > 0 then
       local t = u:getTypeName()
       survivors[t] = (survivors[t] or 0) + 1
       alive[#alive + 1] = u:getName()
-      if not pos then pos = pos2(u:getPoint()) end
+      if not pos then
+        pos = pos2(u:getPoint())
+        if air then state = unit_state(u) end
+      end
+      if air then
+        local f = u:getFuel()
+        if f and (not fuel or f < fuel) then fuel = f end
+        for _, a in ipairs(u:getAmmo() or {}) do
+          local wt = a.desc and a.desc.typeName or "?"
+          ammo[wt] = (ammo[wt] or 0) + (a.count or 0)
+        end
+      end
     end
   end
   local name = d.group
@@ -561,7 +614,12 @@ function commands.despawn_group(d)
   B.suppressed[name] = true
   g:destroy()
   timer.scheduleFunction(function() B.suppressed[name] = nil end, nil, now() + 5)
-  return { survivors = survivors, alive = alive, pos = pos }
+  local res = { survivors = survivors, alive = alive, pos = pos }
+  if air then
+    res.fuel, res.ammo = fuel, ammo
+    if state then res.alt, res.hdg, res.spd = state.alt, state.hdg, state.spd end
+  end
+  return res
 end
 
 function commands.spawn_static(d)
@@ -591,6 +649,10 @@ end
 
 function commands.set_route(d)
   controller_of(d.group):setTask({ id = "Mission", params = { route = { points = d.points } } })
+end
+
+function commands.set_command(d)
+  controller_of(d.group):setCommand(d.command)
 end
 
 function commands.set_task(d)
@@ -670,8 +732,26 @@ function commands.query(d)
     local ab = Airbase.getByName(d.airbase)
     if not ab then return { exists = false } end
     local p = ab:getPoint()
-    return { exists = true, name = ab:getName(), pos = pos2(p), alt = p.y,
+    return { exists = true, name = ab:getName(), id = tonumber(ab:getID()), pos = pos2(p), alt = p.y,
              coalition = ab:getCoalition(), category = ab:getDesc().category }
+  elseif d.what == "parking" then
+    -- Parking spots; with free_only, only those DCS considers available right now.
+    local ab = Airbase.getByName(d.airbase)
+    if not ab then error("no airbase " .. tostring(d.airbase)) end
+    local spots = {}
+    for _, s in ipairs(ab:getParking(d.free_only and true or false) or {}) do
+      spots[#spots + 1] = { term = s.Term_Index, type = s.Term_Type, pos = pos2(s.vTerminalPos),
+                            dist_rw = s.fDistToRW, occupied = s.TO_AC and true or false }
+    end
+    return { spots = spots }
+  elseif d.what == "warehouse" then
+    -- Aircraft stock at an airbase, for the given types.
+    local ab = Airbase.getByName(d.airbase)
+    if not ab then error("no airbase " .. tostring(d.airbase)) end
+    local wh = ab:getWarehouse()
+    local counts = {}
+    for _, t in ipairs(d.types or {}) do counts[t] = wh:getItemCount(t) end
+    return { counts = counts }
   elseif d.what == "heights" then
     -- Terrain elevation (m) for each {x, y} in d.points, in order; e.g. for waypoint elevations.
     local out = {}
@@ -697,18 +777,6 @@ end
 -- Telemetry and main loop
 -- ======================================================================================
 
-local function unit_state(u)
-  local d = describe(u)
-  pcall(function()
-    local p = u:getPosition()
-    local hdg = math.deg(math.atan2(p.x.z, p.x.x))
-    if hdg < 0 then hdg = hdg + 360 end
-    d.hdg = hdg
-    local v = u:getVelocity()
-    d.spd = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
-  end)
-  return d
-end
 
 local function telemetry()
   local players, groups = {}, {}
@@ -721,7 +789,14 @@ local function telemetry()
     local g = Group.getByName(name)
     if g and g:isExist() then
       local u = g:getUnit(1)
-      groups[#groups + 1] = { id = name, pos = u and pos2(u:getPoint()) or nil, alive = g:getSize() }
+      local entry = { id = name, pos = u and pos2(u:getPoint()) or nil, alive = g:getSize() }
+      local cat = g:getCategory()
+      if u and (cat == Group.Category.AIRPLANE or cat == Group.Category.HELICOPTER) then
+        local st = unit_state(u)
+        entry.alt, entry.hdg, entry.spd, entry.fuel = st.alt, st.hdg, st.spd, u:getFuel()
+        entry.in_air = u:inAir()
+      end
+      groups[#groups + 1] = entry
     else
       B.spawned[name] = nil
     end
