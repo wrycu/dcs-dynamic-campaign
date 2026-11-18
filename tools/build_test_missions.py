@@ -46,6 +46,8 @@ def wine_roots(repo_path: str | None = None) -> list[str]:
 
     ``repo_path`` is where the repo is on the machine that runs DCS, if that isn't this one."""
     if repo_path:
+        if len(repo_path) > 1 and repo_path[1] == ":":  # already a Windows path, e.g. C:\dcs-dynamic-campaign
+            return [repo_path.rstrip("\\") + "\\"]
         return ["Z:" + repo_path.rstrip("/").replace("/", "\\") + "\\"]
     paths = {str(ROOT.resolve()), str(ROOT)}
     home, real_home = os.path.expanduser("~"), os.path.realpath(os.path.expanduser("~"))
@@ -121,7 +123,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=ROOT / "build")
     ap.add_argument("--server", metavar="REPO_PATH",
                     help="instead, build campaign-server.miz for a dedicated server: the bridge is loaded from "
-                         "the repo checkout at REPO_PATH on the server, and player aircraft are Client slots")
+                         "the repo checkout at REPO_PATH on the server (a Linux path, read through Wine's Z: drive, "
+                         "or a Windows path such as C:\\dcs-dynamic-campaign), and player aircraft are Client slots")
     args = ap.parse_args()
     if not shutil.which("luajit"):
         raise SystemExit("luajit is required")
