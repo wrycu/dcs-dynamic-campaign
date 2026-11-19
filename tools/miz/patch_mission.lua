@@ -12,6 +12,9 @@ params.lua returns a table:
   player_x, player_y  where to move the player group (DCS map coords), or nil
   player_alt      altitude for the player group's units and waypoints (m), or nil
   clients         true: player aircraft become Client slots (for a multiplayer server)
+  date            { Year = , Month = , Day = }, or nil
+  start_time      seconds after midnight (local), or nil
+  weather         a table merged into mission.weather (only the keys given change), or nil
   dynamic         list of airdrome ids: each becomes BLUE with dynamic slots (players pick an
                   aircraft there, from the warehouse stock, which starts empty), hot start allowed
 ]]
@@ -141,6 +144,18 @@ if params.player_x and params.player_y then
       if params.player_alt then p.alt = params.player_alt end
     end
   end
+end
+
+local function merge(dst, src)
+  for k, v in pairs(src) do
+    if type(v) == "table" and type(dst[k]) == "table" then merge(dst[k], v) else dst[k] = v end
+  end
+end
+if params.date then mission.date = params.date end
+if params.start_time then mission.start_time = params.start_time end
+if params.weather then
+  mission.weather = mission.weather or {}
+  merge(mission.weather, params.weather)
 end
 
 write_table(params.mission_out, "mission", mission)

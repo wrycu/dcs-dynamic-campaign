@@ -85,6 +85,7 @@ class EventKind:
     SLOT_TRY = "slot_try"
     PLAYER_SLOT = "player_slot"
     SLOT_DENIED = "slot_denied"
+    MISSION_LOAD = "mission_load"
 
 
 # ---------- envelope ----------

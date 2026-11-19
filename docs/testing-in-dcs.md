@@ -584,3 +584,35 @@ The probe picks road start and end points 8–20 nm apart within 30 nm of Khalkh
 - **Route queries stall the sim:** about 100 ms each (mostly the bridge's poll interval), some 0.7–1.0 s, felt as stutter. Routes must be computed outside play.
 - **Scale:** 24 convoys of 8 (192 vehicles) moving: smooth, no frozen frames, sim speed 1.00x. 60 convoys of 10 (600 vehicles): a burst of 2–3 frozen frames (~0.4 s) every ~4 s, with the bridge stopped too, so it's DCS's cost for that many moving vehicles; frame rate ~240 → ~130. Ordering the route as point-to-point waypoints (`--orders points`) instead of "On Road" didn't remove it.
 - 5 of the 60 convoys failed to spawn; cause not checked yet.
+
+## Run 11: rebuild and reload the mission (`tools.restart_probe`), proof P4
+On your PC, with your DCS hosting the mission (MULTIPLAYER → New server): `net.load_mission` only works on a server, but a hosted one counts. Question: can the engine write a new .miz with the campaign's date, time and weather, have the server load it, and carry on, with nobody restarting anything by hand?
+
+Each rebuild moves the campaign clock on 6 hours from where the mission is, builds `campaign-next-a.miz` / `-b.miz` (alternating) next to your `a2a.miz` with the next weather in a cycle (overcast with rain → scattered cloud and fog → clear and calm), counts down 15 s, and has the Hooks load it. When the new mission connects, the probe asks DCS what it loaded and prints one `CHECK` line per item.
+
+(On the dedicated server: `--template "$SSG/Missions/a2a.miz" --repo-path 'C:\dcs-dynamic-campaign'`, and `campaign-server.miz`.)
+
+**Setup**
+1. **Reinstall the Hooks** (new: `load_mission`, `mission_load` events), then restart DCS:
+   ```bash
+   cp lua/hooks/campaign_hooks.lua "$SG/Scripts/Hooks/"
+   ```
+2. Start the probe:
+   ```bash
+   python3 -m tools.restart_probe 2>&1 | tee run11.log
+   ```
+3. MULTIPLAYER → New server → host `campaign-dev/campaign-smoke.miz`. Expect `HELLO hooks`, `HELLO mission` and `MISSION Syria 2020-06-01 08:...` with the template's weather.
+
+**Steps**
+1. **First rebuild, from a slot.** Take the FA-18C. F10 > Other > Campaign > **Rebuild: +6 h, next weather**. Expect `BUILD ...`, `REQUEST load ...`, the countdown message in DCS, then `LOAD begin/end/start` lines, `HELLO mission ... new_run=True`, `MISSION ... 14:00`, 8 `CHECK` lines and `RELOAD 1: 8/8 checks ok; ... took N s`.
+   - What happened to you: back at the slot screen, or the briefing? Did you have to do anything besides picking the slot?
+   - Does it look like 14:00 with overcast and rain?
+2. **Second rebuild, from spectators.** Stay in spectators and rebuild (take a slot to use the menu, then go back to spectators during the countdown). Expect 20:00, scattered cloud and fog. Is the server still running, not stuck on a loading screen or paused?
+3. **Third rebuild, unattended.** Ctrl+C the probe and restart it with `--every-min 3`, then leave everything alone in spectators. Expect a rebuild every 3 game minutes; let it do 2 (02:00 clear and calm at night, then 08:00 overcast the next day). If the server pauses when nobody is in a slot, note it: scheduled restarts with nobody on are part of the question.
+
+### What to send back
+- `run11.log`.
+- For each step: pass or what happened, how long the reload took, and what you saw as a client (kicked to the slot screen? disconnected? anything to click?).
+
+### Results (2026-11-19, FA-18C, DCS hosting on your PC)
+All three steps passed: rebuilds from a slot, from spectators, and unattended every 3 game minutes. Each new mission had the requested date, start time and weather (all `CHECK` lines ok), the engine carried on, and nobody had to do anything but pick a slot again. The only manual step was unpausing, because the server is set to start paused; unattended restarts need that setting off, or the Hooks to unpause (`Sim.setPause(false)`) after a load the engine asked for.

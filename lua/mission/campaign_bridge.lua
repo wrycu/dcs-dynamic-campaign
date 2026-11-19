@@ -771,6 +771,21 @@ function commands.query(d)
     local counts = {}
     for _, t in ipairs(d.types or {}) do counts[t] = wh:getItemCount(t) end
     return { counts = counts }
+  elseif d.what == "mission" then
+    -- The loaded mission's date, start time and weather as DCS has them, and the clock now.
+    local m = env.mission or {}
+    local w = m.weather or {}
+    local wind = w.wind or {}
+    local clouds = w.clouds or {}
+    return {
+      abs = timer.getAbsTime(), model = timer.getTime(), theatre = m.theatre,
+      date = m.date, start_time = m.start_time,
+      weather = {
+        preset = clouds.preset, base = clouds.base, temperature = w.season and w.season.temperature,
+        qnh = w.qnh, visibility = w.visibility and w.visibility.distance, fog = w.enable_fog,
+        wind_ground = wind.atGround, wind_2000 = wind.at2000, wind_8000 = wind.at8000,
+      },
+    }
   elseif d.what == "road_point" then
     -- Nearest point on the road network ("roads" or "railroads") to d.pos.
     local x, y = land.getClosestPointOnRoads(d.road or "roads", d.pos.x, d.pos.y)

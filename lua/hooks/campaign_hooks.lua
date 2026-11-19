@@ -9,6 +9,8 @@ What it does:
     environment only sees player names; the engine joins the two by name.
   * Gates slots in onPlayerTryChangeSlot from a rule table the engine pushes with the
     `slot_rules` command. Default (PvE): spectators and blue only.
+  * Loads another mission when the engine asks (`load_mission`), and reports each stage of a
+    mission load (`mission_load`).
 
 Optional: define a global CampaignHooksConfig table before this file loads to override `defaults`.
 
@@ -278,6 +280,20 @@ function commands.slot_rules(d)
               airdromes = reasons(d.deny_airdromes) }
 end
 
+-- Load another mission on this server. data: { file = "name.miz" (in Saved Games\Missions) or a
+-- full Windows path, delay = seconds (default 1) }. The load happens on a later frame, after
+-- the ack has gone out; progress arrives as mission_load events.
+local pending_load
+function commands.load_mission(d)
+  local file = tostring(d.file or "")
+  if file == "" then error("load_mission needs file") end
+  local path = file
+  if not file:match("^%a:[/\\]") then path = lfs.writedir() .. "Missions\\" .. file end
+  if not lfs.attributes(path) then error("no such mission file " .. path) end
+  pending_load = { path = path, at = Sim.getRealTime() + (tonumber(d.delay) or 1) }
+  return { path = path }
+end
+
 function H.on_message(msg)
   if msg.type ~= "cmd" then return end
   local d = type(msg.data) == "table" and msg.data or {}
@@ -313,7 +329,26 @@ callbacks.onSimulationFrame = safe("onSimulationFrame", function()
   if now < next_poll then return end
   next_poll = now + cfg.poll_interval
   transport.tick()
+  if pending_load and now >= pending_load.at then
+    local path = pending_load.path
+    pending_load = nil
+    local ok, res = pcall(net.load_mission, path)
+    emit("mission_load", { stage = "requested", path = path, ok = ok and res ~= false, error = not ok and tostring(res) or nil })
+  end
 end)
+
+local function mission_file()
+  local ok, f = pcall(Sim.getMissionFilename)
+  return ok and f or nil
+end
+
+for cb, stage in pairs({ onMissionLoadBegin = "begin", onMissionLoadEnd = "end",
+                         onSimulationStart = "start", onSimulationStop = "stop" }) do
+  callbacks[cb] = safe(cb, function()
+    if not Sim.isServer() then return end
+    emit("mission_load", { stage = stage, file = mission_file(), real_time = Sim.getRealTime() })
+  end)
+end
 
 callbacks.onPlayerConnect = safe("onPlayerConnect", function(id)
   if not is_tracked_player(id) then return end

@@ -123,6 +123,7 @@ Each message's `data.kind` is one of:
 | `slot_try` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry`: every slot attempt, before the rules. `entry` is DCS's slot listing (`unitId`, `type`, `groupName`, `airdromeId`, ...) or null |
 | `player_slot` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry` |
 | `slot_denied` | `player_id`, `ucid`, `name`, `side`, `slot`, `reason` |
+| `mission_load` | `stage` (`requested`, `begin`, `end`, `start`, `stop`), `file` or `path`, `ok`/`error` (for `requested`), `real_time` |
 
 The engine links mission events to UCIDs by player name. Names are unique on a server at any one time.
 
@@ -152,7 +153,7 @@ From Python: `await bridge.call("mission", "despawn_group", {"group": "gu:2f9a"}
 | `message` | `audience`, `text`, `duration?` (10), `clear?` | – |
 | `menu` | `audience`, `root?` ("Campaign"), `items` | – |
 | `warehouse_set` | `airbase`, `aircraft?: {type: n}`, `weapons?: {type: n}`, `liquids?: {"0": tons}`. Aircraft types are validated (unknown type → error); weapon names cannot be validated in DCS, so the engine must keep its own catalog. | – |
-| `query` | `what`: `time`; `group` with `group`; `airbase` with `airbase`; `heights` with `points` (list of `{x, y}`); `parking` with `airbase`, `free_only?`; `warehouse` with `airbase`, `types`; `road_point` with `pos`, `road?` (`roads` or `railroads`); `road_path` with `from`, `to`, `road?` | Depends on the query: `road_point` returns `{found, pos}`, the nearest point on the network; `road_path` returns `{points}`, DCS's road route as a polyline (empty if none); `airbase` returns `{exists, name, id, pos, alt, coalition, category}`; `heights` returns `{heights: [m, …]}` in point order; `parking` returns `{spots: [{term, type, pos, dist_rw, occupied}]}` (`term` is the `Term_Index` a ramp start's unit `parking` takes); `warehouse` returns `{counts: {type: n}}` |
+| `query` | `what`: `time`; `group` with `group`; `airbase` with `airbase`; `heights` with `points` (list of `{x, y}`); `parking` with `airbase`, `free_only?`; `warehouse` with `airbase`, `types`; `mission` (the loaded mission's `date`, `start_time`, `theatre`, `weather` summary, and `abs`/`model` time now); `road_point` with `pos`, `road?` (`roads` or `railroads`); `road_path` with `from`, `to`, `road?` | Depends on the query: `road_point` returns `{found, pos}`, the nearest point on the network; `road_path` returns `{points}`, DCS's road route as a polyline (empty if none); `airbase` returns `{exists, name, id, pos, alt, coalition, category}`; `heights` returns `{heights: [m, …]}` in point order; `parking` returns `{spots: [{term, type, pos, dist_rw, occupied}]}` (`term` is the `Term_Index` a ramp start's unit `parking` takes); `warehouse` returns `{counts: {type: n}}` |
 
 Notes on `spawn_group` and `despawn_group`:
 - `spawn_group` refuses a name that is already alive. Silent replacement would orphan the old group.
@@ -188,5 +189,6 @@ Notes on `spawn_group` and `despawn_group`:
 | op | data |
 |---|---|
 | `slot_rules` | `allowed_sides` (default `[0, 2]`, spectators and blue), `deny: {ucid: reason}`, `deny_airdromes: {airdrome id: reason}` (slots DCS lists at that airdrome). Replaces the whole rule set. |
+| `load_mission` | `file` (a name in Saved Games\Missions, or a full Windows path), `delay?` (s, default 1). Loads that mission on the server a little later, after the ack; progress arrives as `mission_load` events. Returns `{path}`. |
 
 `onPlayerTryChangeSlot` enforces these rules on the server. A denied player gets the reason as a chat message, and the engine receives `slot_denied`.

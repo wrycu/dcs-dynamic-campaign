@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 PATCHER = ROOT / "tools" / "miz" / "patch_mission.lua"
@@ -41,6 +42,21 @@ DYNAMIC_AIRDROMES = {"Khalkhalah": 18, "Tiyas": 39, "Marj Ruhayyil": 23}
 
 def lua_str(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+
+
+def lua_value(v: Any) -> str:
+    """A Python value as a Lua literal: dicts become tables with ["key"] = value."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return lua_str(v)
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"[{lua_value(k)}] = {lua_value(x)}" for k, x in v.items()) + " }"
+    if isinstance(v, (list, tuple)):
+        return "{ " + ", ".join(lua_value(x) for x in v) + " }"
+    raise TypeError(f"cannot write {type(v).__name__} as Lua")
 
 
 def wine_roots(repo_path: str | None = None) -> list[str]:
@@ -79,7 +95,9 @@ trigger.action.outText("LOADER FAILED: could not load " .. rel .. " (see dcs.log
 
 
 def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, comment: str,
-          repo_path: str | None = None, clients: bool = False, dynamic: list[int] | None = None) -> Path:
+          repo_path: str | None = None, clients: bool = False, dynamic: list[int] | None = None,
+          extra: dict[str, Any] | None = None) -> Path:
+    """``extra``: more patcher params, e.g. ``date``, ``start_time``, ``weather`` (see patch_mission.lua)."""
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
         with zipfile.ZipFile(template) as z:
@@ -100,7 +118,7 @@ def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, 
             "player_alt = 3000",
             f"clients = {'true' if clients else 'false'}",
             f"dynamic = {{ {', '.join(str(i) for i in dynamic or [])} }}",
-        ]) + "\n}\n")
+        ] + [f"{k} = {lua_value(v)}" for k, v in (extra or {}).items()]) + "\n}\n")
         r = subprocess.run(["luajit", str(PATCHER), str(params)], capture_output=True, text=True)
         if r.returncode != 0:
             raise SystemExit(f"patch failed:\n{r.stdout}{r.stderr}")

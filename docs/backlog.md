@@ -227,6 +227,8 @@ ground fight resolved in the engine.
 - Server settings for a campaign: pause when no players are connected (the campaign clock only
   runs while people play, D1), and F10 showing only your own side (already the case for
   coalition slots on the Run 8 server). Document them, and check them at connect.
+- After a mission load the engine asked for, unpause if the server starts missions paused
+  (`Sim.setPause(false)` in the Hooks), so scheduled restarts run unattended.
 
 ## 19. Victory and defeat
 
