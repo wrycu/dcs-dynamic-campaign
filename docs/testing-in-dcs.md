@@ -616,3 +616,27 @@ Each rebuild moves the campaign clock on 6 hours from where the mission is, buil
 
 ### Results (2026-11-19, FA-18C, DCS hosting on your PC)
 All three steps passed: rebuilds from a slot, from spectators, and unattended every 3 game minutes. Each new mission had the requested date, start time and weather (all `CHECK` lines ok), the engine carried on, and nobody had to do anything but pick a slot again. The only manual step was unpausing, because the server is set to start paused; unattended restarts need that setting off, or the Hooks to unpause (`Sim.setPause(false)`) after a load the engine asked for.
+
+## Run 12: kneeboard pages (`tools.kneeboard_probe`), proof P5
+On your PC, hosting the mission (MULTIPLAYER → New server), so you can leave the slot and take it again without restarting. Question: how can the engine get kneeboard pages to players?
+
+- **Built into the mission:** `campaign-kneeboard.miz` carries a page for every aircraft (`KNEEBOARD/IMAGES`) and one for the FA-18C only (`KNEEBOARD/FA-18C_hornet/IMAGES`). Any rebuilt mission (P4) could carry the next session's pages this way.
+- **In your own Kneeboard folder:** DCS scans `Saved Games\DCS\Kneeboard\<type>` when a cockpit is created (`Scripts/Aircrafts/_Common/Cockpit/KNEEBOARD/indicator/init.lua`). A player could save their flight's page there, e.g. downloaded from the war overview. Does it show without restarting the mission?
+
+The probe writes "P5 PAGE A, version 1" into `Kneeboard/FA-18C_hornet` when it starts, and removes its pages when you stop it (Ctrl+C). Every page says what it is and when it was written.
+
+**Steps**
+1. `python3 -m tools.kneeboard_probe 2>&1 | tee run12.log`. Expect `MISSION ... 2 pages built in` and `FOLDER page A version 1`.
+2. MULTIPLAYER → New server → host `campaign-dev/campaign-kneeboard.miz`. Take the FA-18C. Open the kneeboard (K; [ and ] turn pages; or the kneeboard's page list).
+   - Which P5 pages are there: MISSION (every aircraft), MISSION F/A-18C, PAGE A version 1?
+3. F10 > Other > Campaign > **Kneeboard: rewrite page A**, then **Kneeboard: add page B**. Look at the kneeboard again without leaving the jet: is page A still version 1, and is page B missing?
+4. Go to spectators, then take the FA-18C again. Now: page A version 2 and page B?
+5. Ctrl+C the probe; expect `CLEANUP removed 2 test page(s)`.
+
+### What to send back
+- Which pages you saw at steps 2, 3 and 4 (a screenshot of each P5 page helps).
+
+### Results (2026-11-19, FA-18C, DCS hosting on your PC)
+- **Pages built into the mission** show: the all-aircraft page (`KNEEBOARD/IMAGES`) and the FA-18C page (`KNEEBOARD/FA-18C_hornet/IMAGES`).
+- **A page in the Kneeboard folder that's already on the kneeboard updates live** when its file is rewritten (page A, version 2, without leaving the jet).
+- **A new page in the folder appears only on the next spawn** (page B needed leaving the slot and taking it again); no mission restart needed.

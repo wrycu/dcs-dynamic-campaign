@@ -46,7 +46,8 @@ Nothing plans flights yet: the demos build them by hand. Needed:
   exists there; with one .miz and no client mods, the realistic options are fixed slots per
   base (ramp starts) and moving the AI flight to meet the player. Needs a short design note.
 - Players get the route as a `.dtc` cartridge (as in the demos), since the server can't push
-  waypoints into their jet.
+  waypoints into their jet. To find out: which modules can load a cartridge (the FA-18C can);
+  other modules need the route on the kneeboard instead (item 39).
 
 ## 3. War overview UI
 
@@ -87,6 +88,12 @@ Explore what can be shown in the sim. Options to try:
 - **Kneeboard:** images in the .miz reach clients, but only as they were when the mission
   started, so they can't follow the war. Possibly useful for a daily briefing if the engine
   rebuilds the .miz between sessions.
+- **OpenKneeboard** (a separate app many players already use, VR-friendly): it has web page
+  tabs, so it might show the overview page from item 3 in the cockpit with no DCS changes at
+  all. To find out.
+- **The F-4E Phantom's interactive kneeboard:** brainstorm what the campaign could do with it,
+  once we know what a mission or the engine can put on it.
+- **Live kneeboard pages** (item 39): existing pages update when their files are rewritten.
 - To find out: how many drawings DCS handles before the F10 map gets slow, and whether drawings
   can be shown to one group or player instead of a whole coalition.
 
@@ -370,6 +377,12 @@ Players get them like cartridges: download from the overview UI (item 3) or the 
 and put them in their Saved Games kneeboard folder (`Saved Games/DCS/Kneeboard/`, per aircraft
 or shared). Kneeboard images embedded in the .miz are fixed when the mission starts, so they
 can only carry session-wide pages (e.g. a theater overview from the .miz rebuild, item 12).
+
+Run 12 (P5): DCS collects the folder's pages when a cockpit is created, so a new page shows on
+the next spawn; but a page already on the kneeboard **updates live** when its file is
+overwritten. So a fixed set of campaign pages (flight, target, threats, package) that already
+exist in the folder could follow the war during the mission, if something on the player's PC
+rewrites them: an opt-in helper that fetches them from the engine, or a fresh download.
 Goes with briefings (item 16) and is needed as soon as players pick real flights (item 2).
 
 ## Minor improvements

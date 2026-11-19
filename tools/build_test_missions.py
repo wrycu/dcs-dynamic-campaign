@@ -96,8 +96,9 @@ trigger.action.outText("LOADER FAILED: could not load " .. rel .. " (see dcs.log
 
 def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, comment: str,
           repo_path: str | None = None, clients: bool = False, dynamic: list[int] | None = None,
-          extra: dict[str, Any] | None = None) -> Path:
-    """``extra``: more patcher params, e.g. ``date``, ``start_time``, ``weather`` (see patch_mission.lua)."""
+          extra: dict[str, Any] | None = None, files: dict[str, bytes] | None = None) -> Path:
+    """``extra``: more patcher params, e.g. ``date``, ``start_time``, ``weather`` (see patch_mission.lua).
+    ``files``: more files to put in the .miz, by path inside it (e.g. kneeboard pages)."""
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
         with zipfile.ZipFile(template) as z:
@@ -134,7 +135,10 @@ def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, 
             z.write(tmpd / "mission", "mission")
             z.write(tmpd / "warehouses", "warehouses")
             for info, data in entries:
-                z.writestr(info, data)
+                if info.filename not in (files or {}):
+                    z.writestr(info, data)
+            for name, data in (files or {}).items():
+                z.writestr(name, data)
     return dest
 
 
