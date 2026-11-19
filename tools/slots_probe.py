@@ -80,7 +80,7 @@ class Probe:
             self.mission = None
 
     def on_message(self, conn: Connection, env: Envelope) -> None:
-        if env.type != "event":
+        if env.type not in ("event", "player"):  # hooks send player events as type "player"
             return
         kind = env.data.get("kind")
         if conn.src == Src.HOOKS:
@@ -100,18 +100,23 @@ class Probe:
         except (BridgeError, asyncio.TimeoutError) as e:
             print(f"slot_rules FAILED: {e}", flush=True)
 
-    async def setup(self, conn: Connection) -> None:
+    async def step(self, conn: Connection, what: str, op: str, data: dict[str, Any]) -> Any:
         try:
-            for base, n in STOCK.items():
-                await conn.call("warehouse_set", {"airbase": base, "aircraft": {HORNET: n}})
-            await conn.call("menu", {"audience": "all", "items": MENU})
-            await conn.call("message", {"audience": "all", "duration": 30, "text":
-                                        "P2 slots probe connected. Dynamic slots: Khalkhalah 4 Hornets, Tiyas 2 "
-                                        "(refused by the campaign), Marj Ruhayyil 0. F10 > Other > Campaign."})
-            res = await conn.call("spawn_group", join_me_group())
-            print(f"SPAWN   Join Me over {AIRBASE_NAME}, #2 is a Client unit: {short(res)}", flush=True)
+            res = await conn.call(op, data)
+            print(f"SETUP   {what}: ok {short(res) if res else ''}", flush=True)
+            return res
         except (BridgeError, asyncio.TimeoutError) as e:
-            print(f"SETUP FAILED: {type(e).__name__}: {e}", flush=True)
+            print(f"SETUP   {what}: FAILED {type(e).__name__}: {e}", flush=True)
+            return None
+
+    async def setup(self, conn: Connection) -> None:
+        for base, n in STOCK.items():
+            await self.step(conn, f"{base} stock {n}", "warehouse_set", {"airbase": base, "aircraft": {HORNET: n}})
+        await self.step(conn, "F10 menu", "menu", {"audience": "all", "items": MENU})
+        await self.step(conn, "message", "message", {
+            "audience": "all", "duration": 30, "text": "P2 slots probe connected. Dynamic slots: Khalkhalah 4 Hornets, "
+            "Tiyas 2 (refused by the campaign), Marj Ruhayyil 0. F10 > Other > Campaign."})
+        await self.step(conn, f"Join Me over {AIRBASE_NAME} (#2 a Client unit)", "spawn_group", join_me_group())
         asyncio.create_task(self.watch_stock(conn))
 
     async def query_stock(self, conn: Connection) -> dict[str, dict[str, int]]:

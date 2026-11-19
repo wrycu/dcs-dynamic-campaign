@@ -789,7 +789,15 @@ function B.on_message(msg)
     return
   end
   local ok, res = pcall(f, d)
-  if ok then transport.ack(msg.id, true, res) else transport.ack(msg.id, false, nil, tostring(res)) end
+  if ok then transport.ack(msg.id, true, res) else
+    local err = res
+    if type(res) == "table" then  -- DCS sometimes raises a table rather than a string
+      local jok, js = pcall(net.lua2json, res)
+      err = jok and ("error table " .. tostring(js)) or tostring(res)
+    end
+    log_error((d.op or "?") .. " failed: " .. tostring(err))
+    transport.ack(msg.id, false, nil, tostring(err))
+  end
 end
 
 -- ======================================================================================
