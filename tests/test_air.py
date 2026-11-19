@@ -2,6 +2,7 @@ import math
 import unittest
 
 from campaign.air import AirConfig, AirSpawner
+from campaign.air_bubble import fly
 from campaign.flight_spawn import Takeoff, build_flight_spawn
 from campaign.model import (CampaignState, Flight, FlightState, Pos, Side, SpawnState, Squadron, StartMode,
                             Waypoint)
@@ -232,6 +233,16 @@ class AirSpawnerTests(unittest.IsolatedAsyncioTestCase):
 
     def tele(self, x):
         return self.air.on_telemetry({"groups": [{"id": "fl:f1", "pos": {"x": x, "y": 0}, "in_air": True}]})
+
+    async def test_passing_over_the_landing_field_is_not_landing(self):
+        land = Waypoint(Pos(60_000, 0), 500, action="LAND", params={"airdrome_id": 18})
+        f = self.add(flight(wps=[Waypoint(Pos(0, 0), 6_000), Waypoint(Pos(30_000, 0), 6_000), land]))
+        await self.air.spawn(f)
+        self.tele(58_000)  # overhead the field, still airborne: earlier waypoints passed, LAND still ahead
+        self.assertEqual(f.next_wp, 2)
+        await self.air.aggregate(f)
+        self.assertEqual(fly(f, 0, 1), None)  # flies on to the field
+        self.assertEqual(fly(f, 1, 600), "LAND")
 
     async def test_orbit_tracked_on_campaign_clock(self):
         f = self.add(flight())

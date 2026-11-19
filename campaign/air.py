@@ -244,14 +244,18 @@ class AirSpawner:
         Near any upcoming waypoint, everything before it is passed (telemetry is sparse, so a
         waypoint can be skipped between reports). An ORBIT waypoint stays the next one until its
         time is up, measured on the campaign clock from when the flight first got there, so a
-        flight taken out of DCS mid-orbit comes back for the rest of it.
+        flight taken out of DCS mid-orbit comes back for the rest of it. A LAND waypoint is never
+        passed by flying near it, only by landing: a flight overhead or in the pattern hasn't
+        landed, and taken out of DCS there it must still fly to the field and land.
         """
         now = self.state.clock
         for j in range(f.next_wp, len(f.waypoints)):
             wp = f.waypoints[j]
             if math.dist((f.pos.x, f.pos.y), (wp.pos.x, wp.pos.y)) > self.cfg.wp_reached_m:
                 continue
-            if wp.action == "ORBIT":
+            if wp.action == "LAND":
+                f.next_wp, f.hold_until = j, None
+            elif wp.action == "ORBIT":
                 if f.next_wp != j or f.hold_until is None:
                     f.next_wp, f.hold_until = j, now + float(wp.params.get("duration_s", ORBIT_DEFAULT_S))
                 elif now >= f.hold_until:
