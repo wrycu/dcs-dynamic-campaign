@@ -65,6 +65,8 @@ class Flight:
     static: str | None = None
 
 
+SERVER_PLAYER_ID = 1   # a dedicated server is always player 1
+
 FLIGHTS = [
     Flight(1, "Colt 1", "CAS south of Damascus", "AIM-9M*2, AIM-7M*2, FUEL*2"),
     Flight(2, "Uzi 2", "BARCAP over Khalkhalah", "AIM-9M*2, AIM-7M*4, FUEL*3"),
@@ -112,6 +114,8 @@ class Probe:
             return
         kind = d.get("kind")
         if kind == "chat_command":
+            if d.get("player_id") == SERVER_PLAYER_ID:   # the server's own chat (our replies), never a command
+                return
             print(f"CHAT    {d.get('name')} (id {d.get('player_id')}, side {d.get('side')}, slot {d.get('slot')!r}): "
                   f"-{d.get('text')}", flush=True)
             asyncio.create_task(self.command(d))
@@ -207,7 +211,9 @@ class Probe:
         print(f"REPLY   to {player_id}: {text}", flush=True)
         for line in text.split("\n"):
             try:
-                await self.call(self.hooks, "chat_to", {"player_id": player_id, "text": line})
+                # "> " so a reply never starts with the command prefix: the server's own chat goes
+                # through the same hook, and Run 14 looped on "-draw failed: ...".
+                await self.call(self.hooks, "chat_to", {"player_id": player_id, "text": "> " + line})
             except (BridgeError, asyncio.TimeoutError) as e:
                 print(f"REPLY   failed: {e}", flush=True)
 

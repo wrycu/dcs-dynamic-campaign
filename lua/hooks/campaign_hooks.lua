@@ -463,6 +463,8 @@ end
 callbacks.onPlayerTrySendChat = safe("onPlayerTrySendChat", function(id, msg, all)
   log_info("onPlayerTrySendChat id=" .. tostring(id) .. " all=" .. tostring(all) .. " msg=" .. tostring(msg))
   if not is_tracked_player(id) or type(msg) ~= "string" then return nil end
+  -- The server's own chat (the engine's replies) comes through here too; never treat it as a command.
+  if id == net.get_my_player_id() then return nil end
   if msg:sub(1, #cfg.chat_prefix) ~= cfg.chat_prefix then return nil end
   local info = net.get_player_info(id) or {}
   emit("chat_command", { player_id = id, ucid = info.ucid or H.ucids[id], name = info.name, side = info.side,
