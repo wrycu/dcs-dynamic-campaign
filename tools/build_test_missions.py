@@ -38,6 +38,9 @@ AIRBASE_XY = (-216085.3, 52697.5)
 TOWER_SCENERY_ID = "27320578"
 # Dynamic slots for proof P2 (airdrome ids from Mods/terrains/Syria/radio.lua, radioId 'airfield<id>_0').
 DYNAMIC_AIRDROMES = {"Khalkhalah": 18, "Tiyas": 39, "Marj Ruhayyil": 23}
+# A Client Hornet parked cold at Khalkhalah (proof P19: force_player_slot + the client script's spawn
+# on a ramp start). DCS picks the parking spot when the player spawns.
+PARKED_CLIENT = {"name": "Ramp", "airdrome_id": AIRDROME_ID, "x": AIRBASE_XY[0], "y": AIRBASE_XY[1]}
 
 
 def lua_str(s: str) -> str:
@@ -158,7 +161,8 @@ def main() -> None:
         server = build(args.template, args.out, "campaign-server.miz", "lua/mission/campaign_bridge.lua", "",
                        "Load campaign bridge", args.server, clients=True)
         slots = build(args.template, args.out, "campaign-slots.miz", "lua/mission/campaign_bridge.lua", "",
-                      "Load campaign bridge", args.server, clients=True, dynamic=list(DYNAMIC_AIRDROMES.values()))
+                      "Load campaign bridge", args.server, clients=True, dynamic=list(DYNAMIC_AIRDROMES.values()),
+                      extra={"parked_client": PARKED_CLIENT})
         print(f"wrote {server}\nwrote {slots}\nrepo roots tried by the loader: {wine_roots(args.server)}")
         return
     probe = build(args.template, args.out, "campaign-probe.miz", "lua/devtools/probe.lua",

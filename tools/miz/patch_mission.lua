@@ -17,6 +17,8 @@ params.lua returns a table:
   weather         a table merged into mission.weather (only the keys given change), or nil
   dynamic         list of airdrome ids: each becomes BLUE with dynamic slots (players pick an
                   aircraft there, from the warehouse stock, which starts empty), hot start allowed
+  parked_client   { name =, airdrome_id =, x =, y = }: add a one-ship Client copy of the first player
+                  group, parked cold at that airdrome (DCS picks the spot), or nil
 ]]
 
 local params = dofile(arg[1])
@@ -146,6 +148,61 @@ if params.player_x and params.player_y then
   end
 end
 
+-- A one-ship Client group parked cold at an airdrome, cloned from the first player group (P19:
+-- the server force-moves a player into it and the client script spawns them). No parking spot is
+-- given, so DCS picks a free one when the player spawns.
+local function deep_copy(t)
+  if type(t) ~= "table" then return t end
+  local c = {}
+  for k, v in pairs(t) do c[k] = deep_copy(v) end
+  return c
+end
+local function max_ids()
+  local gmax, umax = 0, 0
+  for _, side in pairs(mission.coalition or {}) do
+    for _, ctry in pairs(side.country or {}) do
+      for _, cat in pairs(ctry) do
+        if type(cat) == "table" and type(cat.group) == "table" then
+          for _, g in pairs(cat.group) do
+            gmax = math.max(gmax, tonumber(g.groupId) or 0)
+            for _, u in pairs(g.units or {}) do umax = math.max(umax, tonumber(u.unitId) or 0) end
+          end
+        end
+      end
+    end
+  end
+  return gmax, umax
+end
+local pc = params.parked_client
+if pc then
+  local src = players[1]
+  local ctry
+  for _, side in pairs(mission.coalition) do
+    for _, c in pairs(side.country or {}) do
+      for _, g in pairs((c.plane or {}).group or {}) do if g == src then ctry = c end end
+    end
+  end
+  assert(ctry, "parked_client: the first player group is not a plane group")
+  local gmax, umax = max_ids()
+  local g = deep_copy(src)
+  local u = g.units[1]
+  g.units = { [1] = u }
+  g.groupId, u.unitId = gmax + 1, umax + 1
+  g.name, u.name = pc.name, pc.name .. "-1"
+  g.x, g.y, u.x, u.y = pc.x, pc.y, pc.x, pc.y
+  u.alt, u.speed, u.heading, u.skill = 0, 0, 0, "Client"
+  u.parking, u.parking_id = nil, nil
+  g.uncontrolled, g.lateActivation = false, nil
+  g.route = { points = { [1] = {
+    alt = 0, alt_type = "BARO", action = "From Parking Area", type = "TakeOffParking",
+    airdromeId = pc.airdrome_id, x = pc.x, y = pc.y, speed = 0, ETA = 0, ETA_locked = true,
+    formation_template = "", speed_locked = true,
+    task = { id = "ComboTask", params = { tasks = {} } },
+  } } }
+  local list = ctry.plane.group
+  list[#list + 1] = g
+end
+
 local function merge(dst, src)
   for k, v in pairs(src) do
     if type(v) == "table" and type(dst[k]) == "table" then merge(dst[k], v) else dst[k] = v end
@@ -180,5 +237,6 @@ for _, id in ipairs(params.dynamic or {}) do
 end
 write_table(params.warehouses_out, "warehouses", warehouses)
 
-print(string.format("patched: %d player group(s), airport %d BLUE, limited aircraft%s", #players, params.airdrome_id,
-  (params.dynamic and #params.dynamic > 0) and (", dynamic slots at " .. table.concat(params.dynamic, ", ")) or ""))
+print(string.format("patched: %d player group(s), airport %d BLUE, limited aircraft%s%s", #players, params.airdrome_id,
+  (params.dynamic and #params.dynamic > 0) and (", dynamic slots at " .. table.concat(params.dynamic, ", ")) or "",
+  pc and string.format(", parked Client %q at airdrome %d", pc.name, pc.airdrome_id) or ""))

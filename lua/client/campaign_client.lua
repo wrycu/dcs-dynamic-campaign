@@ -40,12 +40,14 @@ local function from_server(sender_id)
   return Sim.isMultiplayer() and not Sim.isServer() and sender_id == server
 end
 
--- What the stock screen does once the slot is ours: close the slot screens and spawn.
+-- What the stock slot screen does once the slot is ours: net.spawn_player() and unpause the view.
+-- (Its UI modules, e.g. MultiplayerSelectRole, are not loadable from Hooks: Run 14c.)
+-- Run 14c: works for a mission slot the server moved us into (force_player_slot); for a dynamic
+-- slot, DCS logs spawnLocalPlayer but the player is not put in the jet.
 local function enter()
-  local ok = pcall(function() require("MultiplayerSelectRole").onEsc() end)
-  if not ok then net.spawn_player() end
+  net.spawn_player()
   pcall(function() Sim.setViewPause(false) end)
-  log_info("entered (" .. (ok and "via the slot screen" or "net.spawn_player") .. ")")
+  log_info("entered: net.spawn_player")
 end
 
 function RPC.method.campaignJoin(sender_id, spawn)
