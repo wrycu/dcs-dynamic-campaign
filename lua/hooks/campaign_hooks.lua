@@ -11,6 +11,10 @@ What it does:
     `slot_rules` command. Default (PvE): spectators and blue only.
   * Loads another mission when the engine asks (`load_mission`), and reports each stage of a
     mission load (`mission_load`).
+  * Chat commands: chat starting with "!" goes to the engine (`chat_command`) instead of the
+    other players; the engine answers with `chat_to`.
+  * Puts players into aircraft (`spawn_for`, `force_slot`) and reports the server's frame times
+    (`frame_stats`), for proof P19.
 
 Optional: define a global CampaignHooksConfig table before this file loads to override `defaults`.
 
@@ -37,6 +41,8 @@ local defaults = {
   max_bytes = 256 * 1024,
   allowed_sides = { 0, 2 },  -- spectators, blue (PvE: red is AI-only)
   side_denied_reason = "That side is AI-only in this campaign.",
+  chat_prefix = "!",         -- chat starting with this is a command for the engine
+  frame_stats_interval = 10, -- seconds of real time between frame_stats events (0: off)
 }
 
 local cfg = {}
@@ -294,6 +300,49 @@ function commands.load_mission(d)
   return { path = path }
 end
 
+-- data: { player_id?, text }. Without player_id, to everyone.
+function commands.chat_to(d)
+  if d.player_id then net.send_chat_to(tostring(d.text), tonumber(d.player_id))
+  else net.send_chat(tostring(d.text), true) end
+end
+
+-- Every connected player: { id, name, ucid, side, slot }.
+function commands.players()
+  local out = {}
+  for _, id in ipairs(net.get_player_list() or {}) do
+    local i = net.get_player_info(id) or {}
+    out[#out + 1] = { id = id, name = i.name, ucid = i.ucid, side = i.side, slot = i.slot }
+  end
+  return out
+end
+
+-- Move a player to a slot (side 0 and slot "" for spectators). data: { player_id, side, slot }.
+function commands.force_slot(d)
+  return { ok = net.force_player_slot(tonumber(d.player_id), tonumber(d.side) or 0, tostring(d.slot or "")) }
+end
+
+-- Spawn a dynamic-slot aircraft for a player, as the slot screen does for its own player
+-- (MultiplayerSelectAirdromeDialog.lua). data: { player_id, spawn = { the dialog's fields } };
+-- userId and nickName default to the player. Returns what DCS returned.
+function commands.spawn_for(d)
+  local spawn = type(d.spawn) == "table" and d.spawn or {}
+  local id = tonumber(d.player_id)
+  spawn.userId = spawn.userId or id
+  spawn.nickName = spawn.nickName or tostring(id)
+  if type(spawn.pylon_list) == "table" then  -- JSON can't carry numeric keys: [{num, CLSID}]
+    local pylons = {}
+    for _, p in ipairs(spawn.pylon_list) do pylons[tonumber(p.num)] = { CLSID = p.CLSID, num = tonumber(p.num) } end
+    spawn.pylons, spawn.pylon_list = pylons, nil
+  end
+  spawn.pylons = spawn.pylons or {}
+  spawn.addProps = spawn.addProps or { pylons = spawn.pylons }
+  local create = Sim.create_client_aircraft or (DCS and DCS.create_client_aircraft)
+  if not create then error("create_client_aircraft is not available here") end
+  local ok, res = pcall(create, spawn)
+  if not ok then error("create_client_aircraft: " .. tostring(res)) end
+  return { result = res }
+end
+
 function H.on_message(msg)
   if msg.type ~= "cmd" then return end
   local d = type(msg.data) == "table" and msg.data or {}
@@ -323,9 +372,29 @@ end
 local callbacks = {}
 local next_poll = 0
 
+-- Server frame times, to see what F10 drawings cost (proof P19).
+local frames = { n = 0, sum = 0, max = 0, slow = 0, last = nil, since = nil }
+
+local function frame_stats(now)
+  if frames.last then
+    local dt = now - frames.last
+    frames.n, frames.sum = frames.n + 1, frames.sum + dt
+    if dt > frames.max then frames.max = dt end
+    if dt > 0.05 then frames.slow = frames.slow + 1 end
+  end
+  frames.last = now
+  frames.since = frames.since or now
+  if cfg.frame_stats_interval > 0 and now - frames.since >= cfg.frame_stats_interval and frames.n > 0 then
+    emit("frame_stats", { frames = frames.n, avg_ms = frames.sum / frames.n * 1000, max_ms = frames.max * 1000,
+                          over_50ms = frames.slow, seconds = now - frames.since })
+    frames.n, frames.sum, frames.max, frames.slow, frames.since = 0, 0, 0, 0, now
+  end
+end
+
 callbacks.onSimulationFrame = safe("onSimulationFrame", function()
   if not Sim.isServer() then return end
   local now = Sim.getRealTime()
+  frame_stats(now)
   if now < next_poll then return end
   next_poll = now + cfg.poll_interval
   transport.tick()
@@ -388,6 +457,17 @@ local function slot_entry(side, slot)
   end
   return nil
 end
+
+-- Chat starting with cfg.chat_prefix is a command for the engine; the other players don't see
+-- it. Returning "" drops the message.
+callbacks.onPlayerTrySendChat = safe("onPlayerTrySendChat", function(id, msg, all)
+  if not is_tracked_player(id) or type(msg) ~= "string" then return nil end
+  if msg:sub(1, #cfg.chat_prefix) ~= cfg.chat_prefix then return nil end
+  local info = net.get_player_info(id) or {}
+  emit("chat_command", { player_id = id, ucid = info.ucid or H.ucids[id], name = info.name, side = info.side,
+                         slot = info.slot, text = msg:sub(#cfg.chat_prefix + 1) })
+  return ""
+end)
 
 -- Return false to deny; return nil (not true) to allow so other hooks still get a say.
 callbacks.onPlayerTryChangeSlot = safe("onPlayerTryChangeSlot", function(id, side, slot)

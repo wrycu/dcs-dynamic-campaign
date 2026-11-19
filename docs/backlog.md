@@ -1,7 +1,7 @@
 # Backlog
 
 The big items. Items 1–5 were asked for; 6–13 are needed for a working campaign; 14–19 are
-worth having; 20–38 are further features, many from BMS; 39 (kneeboards) is needed. The order
+worth having; 20–38 are further features, many from BMS; 39 (kneeboards) is needed; 40 deepens the P7 combat model; 41 is the briefing-room idea. The order
 they're done in, and which need proving first, is in the [roadmap](roadmap.md). Smaller known
 gaps live in each area's "Not done yet" section ([air](air.md#not-done-yet),
 [bubble](bubble.md#not-done-yet)).
@@ -389,6 +389,67 @@ overwritten. So a fixed set of campaign pages (flight, target, threats, package)
 exist in the folder could follow the war during the mission, if something on the player's PC
 rewrites them: an opt-in helper that fetches them from the engine, or a fresh download.
 Goes with briefings (item 16) and is needed as soon as players pick real flights (item 2).
+
+## 40. Deeper abstract combat
+
+P7 showed the fight model in `campaign/combat.py` is believable but simple ([combat](combat.md)).
+Deepen it once the playable campaign runs on it:
+
+- **Settings:** move the type tables and constants (power, toughness, SAM chances, CAS rates)
+  into scenario settings, and give `tools/combat_tables.py` a way to check a scenario's values.
+- **Ground:** defenders in a town break later (2:1 at even quality wins 91% now; the 3:1 rule
+  says about 50%); damaged vs destroyed vehicles (the war sim's repairs, made part of the model);
+  artillery counter-battery; infantry that matters in towns; rivers and bridges as obstacles
+  (P6 found the bridges); night and weather.
+- **Air:** missiles and fuel limit a fight; escorts screen strikers; GCI for the side without
+  AWACS; a flight that is jumped jettisons and aborts; helicopters (item 31).
+- **Air defence:** SAM sites as formations that can be hit by strikes, not only SEAD; radar
+  repairs that use supply; MANPADS with ground units.
+- **Balance:** blue air losses run 0.5-1.2% per sortie (1973 rather than 1991). Decide what the
+  game wants, maybe per difficulty (item 38).
+- Not in this item: the ground commander that keeps a front line and secures its rear (item 8),
+  red's air commander keeping its air force back (item 2/20), replacements (item 9).
+
+## 41. Briefing room in DCS
+
+The idea (not settled yet): players join the server, look at the war on a map inside DCS, pick a
+flight there, and end up in its aircraft. Maybe even walk out to the jet. Overlaps items 2
+(choosing a flight), 3 (overview) and 4 (overview inside DCS). Proof P19 finds out how much works.
+
+What DCS offers (checked in the 2.9 install, 2026-11-19):
+- **Walking:** three ways to try, roughest last.
+  - **As the pilot after ejecting.** An ejected pilot can walk in first person, and on the ground
+    that may be as simple as leaving a parked jet (LCtrl+E three times). The player would start in
+    a "ready room" jet at the briefing area, climb out, and walk to the jet of the flight they want.
+    Unknowns: does the server see the walking pilot's position (other players reportedly don't see
+    it move), and does a player who walked up to a parked jet get moved into it?
+  - **A unit the engine moves.** A soldier or vehicle stands in for the player, moved by the engine
+    from F10 menu or chat commands ("walk to Hornet 2"), watched from outside. Janky, but needs
+    nothing.
+  - **Driving with Combined Arms,** for players who own it: they control a soldier or vehicle
+    themselves.
+- **No-mod route:**
+  - **Spectators** can open the F10 map. In PvE every player is blue, so the campaign's
+    drawings can go to everyone.
+  - **Chat** reaches the server Hooks (`onPlayerTrySendChat`) from spectators, so `!flights` and
+    `!join 2` could work with nothing installed. The server answers with `net.send_chat_to`.
+  - **Server-side join:** the slot dialog spawns a dynamic-slot aircraft with
+    `DCS.create_client_aircraft(spawn)`. The spawn data has the type, base, fuel, pylons, livery,
+    hot or cold, and an `isInAir` flag the dialog always sets to false. If the server can call it
+    for another player, a flight pick could put that player straight into the flight's jet with
+    the planned loadout and fuel. `isInAir` might even allow joining a flight in the air (P2's
+    open question). `net.force_player_slot` moves a player into a fixed slot.
+- **Opt-in client script** (a Hooks file on the player's PC, like SRS or the Scratchpad mod;
+  nothing in the DCS install changes):
+  - **A real in-game window.** DCS's own UI toolkit (dxgui: windows, lists, buttons, hotkeys) is
+    available to Hooks scripts and isn't Chromium, so it may work on Linux where the browser
+    didn't. DCS even has a map widget (`NewMapView`, used by the slot screen), possibly reusable
+    for a war map.
+  - **Data both ways with no network setup:** DCS ships an `RPC` module that its own multi-crew
+    Hooks use to call functions between the server's GUI and a client's
+    (`RPC.sendEvent(player_id, method, ...)`).
+  - **One-click join:** the script could call `create_client_aircraft` itself, exactly as the
+    slot dialog does, with the flight's loadout.
 
 ## Minor improvements
 

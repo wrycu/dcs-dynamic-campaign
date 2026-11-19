@@ -98,7 +98,8 @@ Each event's `data.kind` is one of the following. Unit and object descriptors lo
 | `kill` | `killer`, `victim`, `weapon`: kill credit. It may arrive before or after the matching `unit_killed`. |
 | `hit` | `target`, `shooter`, `weapon`. Statics and scenery only, at most once per target per second. |
 | `scenery_destroyed` | `object`. `name` is `getName()` as a string, the unsigned scenery id that `Feature.dcs_ref` stores. `id_` is the same value as a signed 32-bit integer, so it goes negative above 2^31 (`2215182453` arrives as `-2079784843`). |
-| `ejection` / `pilot_dead` | `unit` |
+| `ejection` | `unit`, `pilot` (the object DCS hands over as the ejected pilot, if any) |
+| `pilot_dead` | `unit` |
 | `landing_after_ejection` | `unit`, `place` |
 | `player_enter_unit` / `player_leave_unit` | `unit` (with `player` = player name) |
 | `menu_select` | `key`, `audience`, `group` (group name, for group menus only) |
@@ -110,6 +111,8 @@ Each event's `data.kind` is one of the following. Unit and object descriptors lo
            {"id":"fl:cap1","pos":{...},"alive":2,"alt":6100,"hdg":10,"spd":220,"fuel":0.71,"in_air":true}]}
 ```
 `groups` covers every campaign group the bridge spawned. Aircraft groups also carry the lead's `alt` (m), `hdg` (degrees true), `spd` (m/s), `fuel` (fraction) and `in_air`.
+
+`walkers` lists ejected pilots the bridge was handed by `ejection` or `landing_after_ejection`: `key`, `exists`, `from` (the unit they left), and while they exist the usual `type`, `category`, `pos`. A pilot that no longer exists is reported once more and then dropped.
 
 ## hooks → engine
 
@@ -123,6 +126,8 @@ Each message's `data.kind` is one of:
 | `slot_try` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry`: every slot attempt, before the rules. `entry` is DCS's slot listing (`unitId`, `type`, `groupName`, `airdromeId`, ...) or null |
 | `player_slot` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry` |
 | `slot_denied` | `player_id`, `ucid`, `name`, `side`, `slot`, `reason` |
+| `chat_command` | `player_id`, `ucid`, `name`, `side`, `slot`, `text`: chat starting with `!` (the `!` removed). The other players don't see it. |
+| `frame_stats` | `frames`, `avg_ms`, `max_ms`, `over_50ms`, `seconds`: the server's frame times, every 10 s of real time |
 | `mission_load` | `stage` (`requested`, `begin`, `end`, `start`, `stop`), `file` or `path`, `ok`/`error` (for `requested`), `real_time` |
 
 The engine links mission events to UCIDs by player name. Names are unique on a server at any one time.
@@ -148,12 +153,13 @@ From Python: `await bridge.call("mission", "despawn_group", {"group": "gu:2f9a"}
 | `set_task` | `group`, `task`, `push?` | – |
 | `set_command` | `group`, `command` (a DCS command table, e.g. `{"id": "Start", "params": {}}` to start an uncontrolled flight) | – |
 | `draw` | `id` (number, owned by the engine), `audience`, `shape`, plus the shape's fields (see below) | – |
+| `draw_batch` | `items`: a list of `draw` data | `{drawn, ms}` (ms of real time DCS took) |
 | `undraw` | `id`, or `ids` | – |
 | `smoke` | `pos`, `color?` (`red`, `green`, `white`, `orange` or `blue`; default `red`). Smoke lasts about 5 min. | – |
 | `message` | `audience`, `text`, `duration?` (10), `clear?` | – |
 | `menu` | `audience`, `root?` ("Campaign"), `items` | – |
 | `warehouse_set` | `airbase`, `aircraft?: {type: n}`, `weapons?: {type: n}`, `liquids?: {"0": tons}`. Aircraft types are validated (unknown type → error); weapon names cannot be validated in DCS, so the engine must keep its own catalog. | – |
-| `query` | `what`: `time`; `group` with `group`; `airbase` with `airbase`; `heights` with `points` (list of `{x, y}`); `parking` with `airbase`, `free_only?`; `warehouse` with `airbase`, `types`; `airbases` (all of them: `name`, `id`, `pos`, `alt`, `category`, `coalition`, `type`, `runways`, `parking` count); `ll_to_xy` with `points` (`{lat, lon}`) → `{points}` as `{x, y}`; `scenery` with `center`, `radius`, `match?` (type-name substrings), `limit?` → `{total, counts: {type: n}, found: [{type, pos}]}`; `mission` (the loaded mission's `date`, `start_time`, `theatre`, `weather` summary, and `abs`/`model` time now); `road_point` with `pos`, `road?` (`roads` or `railroads`); `road_path` with `from`, `to`, `road?` | Depends on the query: `road_point` returns `{found, pos}`, the nearest point on the network; `road_path` returns `{points}`, DCS's road route as a polyline (empty if none); `airbase` returns `{exists, name, id, pos, alt, coalition, category}`; `heights` returns `{heights: [m, …]}` in point order; `parking` returns `{spots: [{term, type, pos, dist_rw, occupied}]}` (`term` is the `Term_Index` a ramp start's unit `parking` takes); `warehouse` returns `{counts: {type: n}}` |
+| `query` | `what`: `time`; `group` with `group`; `airbase` with `airbase`; `heights` with `points` (list of `{x, y}`); `parking` with `airbase`, `free_only?`; `warehouse` with `airbase`, `types`; `airbases` (all of them: `name`, `id`, `pos`, `alt`, `category`, `coalition`, `type`, `runways`, `parking` count); `ll_to_xy` with `points` (`{lat, lon}`) → `{points}` as `{x, y}`; `scenery` with `center`, `radius`, `match?` (type-name substrings), `limit?` → `{total, counts: {type: n}, found: [{type, pos}]}`; `objects` with `center`, `radius`, `limit?` (50) → `{found}`: units, weapons, statics and cargo nearby, described like event units plus `id`; `mission` (the loaded mission's `date`, `start_time`, `theatre`, `weather` summary, and `abs`/`model` time now); `road_point` with `pos`, `road?` (`roads` or `railroads`); `road_path` with `from`, `to`, `road?` | Depends on the query: `road_point` returns `{found, pos}`, the nearest point on the network; `road_path` returns `{points}`, DCS's road route as a polyline (empty if none); `airbase` returns `{exists, name, id, pos, alt, coalition, category}`; `heights` returns `{heights: [m, …]}` in point order; `parking` returns `{spots: [{term, type, pos, dist_rw, occupied}]}` (`term` is the `Term_Index` a ramp start's unit `parking` takes); `warehouse` returns `{counts: {type: n}}` |
 
 Notes on `spawn_group` and `despawn_group`:
 - `spawn_group` refuses a name that is already alive. Silent replacement would orphan the old group.
@@ -190,5 +196,9 @@ Notes on `spawn_group` and `despawn_group`:
 |---|---|
 | `slot_rules` | `allowed_sides` (default `[0, 2]`, spectators and blue), `deny: {ucid: reason}`, `deny_airdromes: {airdrome id: reason}` (slots DCS lists at that airdrome). Replaces the whole rule set. |
 | `load_mission` | `file` (a name in Saved Games\Missions, or a full Windows path), `delay?` (s, default 1). Loads that mission on the server a little later, after the ack; progress arrives as `mission_load` events. Returns `{path}`. |
+| `chat_to` | `player_id?`, `text`: a chat line to one player, or to everyone without `player_id`. |
+| `players` | – Returns every connected player: `[{id, name, ucid, side, slot}]`. |
+| `force_slot` | `player_id`, `side`, `slot` (`0` and `""` for spectators): `net.force_player_slot`. Returns `{ok}`. |
+| `spawn_for` | `player_id`, `spawn`: a dynamic-slot spawn for that player, the fields the slot screen passes to `DCS.create_client_aircraft` (`airdromeId`, `isAirdrome`, `coalition`, `coalitionId`, `typeLA`, `category`, `numFuel` kg, `numFlare`, `numChaff`, `gun`, `ammoType`, `liveryEntry`, `isHot`, `isInAir`, ...). Pylons go as `pylon_list: [{num, CLSID}]` (JSON can't carry numeric keys). `userId` and `nickName` default to the player. Returns `{result}`, what DCS returned. Proof P19: does it work for another player? |
 
 `onPlayerTryChangeSlot` enforces these rules on the server. A denied player gets the reason as a chat message, and the engine receives `slot_denied`.

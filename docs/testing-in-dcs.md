@@ -665,3 +665,44 @@ Things the map layer build has to handle:
 1. **Places aren't towns.** `towns.lua` lists landmarks next to towns: Umayyad Mosque, Ministry of Expatriates, Four Seasons Hotel, Damascus Tower and Central Bank of Syria all sit in central Damascus. Each counts as its own place, so Damascus filled 10 of the 40 objective spots. Places within about 2 km of each other need merging into one town, named after its largest member or a known town name.
 2. **Size counts clutter.** The object counts include trash cans, market stalls and walls (`TRASHCAN_EU_SMALL` 11,892, `STREET_MARKET_2` 4,950). Counting only buildings (`*HOUSE*`, `*BUILDING*`) would rank towns better.
 3. **Helipads are not airbases.** They're FARP or landing site candidates at best, and most links that went the long way round or found no road start at one.
+
+## Run 14: briefing room, no mods (`tools.briefing_probe`), proof P19 part 1
+Same server and paths as Runs 8 and 9 (`$SDCS`, `$SSG`, `$REPO`), with your own DCS joining as a client. The question: how much of "see the war in DCS, pick a flight, end up in its jet, maybe walk there" works with nothing installed on the player's PC?
+
+The probe parks three Hornets at Khalkhalah, one per mock flight (Colt 1, Uzi 2, Enfield 3), labels them on F10, and takes chat commands. Chat starting with `!` goes to the server, and the other players don't see it.
+
+**Setup**
+1. Get the new code onto the server (changed: the Hooks, the mission bridge; new: `tools/briefing_probe.py`).
+2. **Reinstall the Hooks** and restart the DCS server:
+   ```bash
+   cp "$REPO/lua/hooks/campaign_hooks.lua" "$SSG/Scripts/Hooks/"
+   ```
+3. Start the probe, then load `campaign-slots.miz` (from Run 9; the mission loads the bridge from the repo, so no rebuild needed):
+   ```bash
+   cd "$REPO" && python3 -m tools.briefing_probe 2>&1 | tee run14.log
+   ```
+   Expect `HELLO hooks`, then once you're connected `HELLO mission`, three `FLIGHT` lines and `SETUP done`.
+
+**Steps** (screenshots help)
+1. **What a spectator sees.** Connect, pick blue, and stay in spectators. Open the F10 map near Khalkhalah.
+   - Do you see `P19: drawn for ALL`? `P19: drawn for BLUE only`? The red line north of the base? The three flight labels?
+   - Can you see the parked Hornets (zoom in)?
+   - Try once more after choosing no side at all, if the slot screen allows it.
+2. **Chat from spectators.** Type `!help` and then `!flights`. Expect `CHAT` lines in the log and the replies in your chat. Did the other chat (if anyone is on) see your `!` lines?
+3. **The server puts you in a jet.** Still in spectators:
+   - `!join 1`: expect `JOIN ... create_client_aircraft returned`, then `HOOKS player_slot` and `EVENT birth`. Are you in a cold Hornet at Khalkhalah? Check the loadout (2 AIM-9, 2 AIM-7, 2 tanks) and fuel (about 60%).
+   - `!spec` to go back to spectators (`net.force_player_slot`). Did it work?
+   - `!join 2 hot`, then `!spec`.
+   - `!join 3 air`: an air start (`isInAir`). Where do you appear, if anywhere?
+   - If `!join` returns false or nothing happens, try `!join 1 cat=plane`, and send the log; it shows exactly what was sent.
+4. **What the F10 map can carry.** Watch the `FRAME` lines (server frame times every 10 s) and your own frame rate (RCtrl+Pause) with the F10 map open, then closed:
+   - `!draw 100`, wait for two `FRAME` lines; then `!draw 500`, `!draw 2000`.
+   - `!churn 10` (redraw all every 10 s), then `!churn 2`. Do shapes flicker or lag on your client?
+   - `!clear`.
+5. **Walking.** `!join 1`, open the canopy, and press LCtrl+E three times to climb out.
+   - Can you walk? Expect `EVENT ejection` and `WALKER` lines as you move. If there are none, type `!where` and `!near 100`.
+   - Walk to Uzi 2's parked Hornet (the label is on F10). Within 15 m expect `REACH`, and the probe tries to put you in Uzi 2's jet.
+   - Can you see other parked jets and the base around you while walking? Anything janky?
+
+### What to send back
+- `run14.log`, and what you saw at each step.

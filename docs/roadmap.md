@@ -41,6 +41,7 @@ In order of risk. Each is a short spike with a pass/fail question.
 | P5 | Kneeboard delivery | 39 | How do kneeboard pages reach players? Pages built into the .miz (for all aircraft, per type), and pages in each player's own `Saved Games/DCS/Kneeboard` folder: does DCS pick up new ones mid-mission, on the next spawn, or only at mission start? **Passed (Run 12, 2026-11-19):** pages built into the .miz show, for all aircraft and per type; folder pages show on the next spawn, and existing ones update live when rewritten. The server can only deliver through the .miz (at each rebuild, P4); live pages need something on the player's PC to rewrite them. |
 | P6 | Theater data | 7 | Can airbases, towns, roads and bridges be extracted from DCS for Syria (`map/towns.lua`, airbases and road paths from a mission script, map objects, `MissionGenerator/nodes.lua`) well enough to build objectives and links? Includes computing and saving road routes between objectives (P3). **Passed (Run 13, 2026-11-19):** airbases (runways, parking), all 1,182 places, bridges (scenery search) and road routes between objectives (199 of 210 links) all come out of DCS in about 2 minutes, and are saved as JSON. The build must merge landmarks into towns (central Damascus is 10 "places"), rank by buildings only, and treat runway-less "airbases" (132 of 225) as helipads. `nodes.lua` and `roads/*.rn4` aren't needed. |
 | P7 | Abstract combat | 8, air combat | Does a simple model of ground and air fights give believable results? Test by running the war offline (an early version of item 17). **Passed (offline, 2026-11-19):** hourly ground attrition and per-mission air fights (`campaign/combat.py`) match real-world references in direction and roughly in size, and the force balance works as a setting: a quick win, a contested war, or a stall. A 14-day war runs in under a second. What needs work is above the fights: a ground commander that keeps a front line and guards its rear, a red air commander that keeps its air force back, and replacements. See [combat](combat.md). |
+| P19 | Briefing room in DCS | 41, 2, 4 | How much of "see the war in DCS, pick a flight, end up in its jet" works? (1) No mods: what spectators see on F10, chat commands from spectators, and whether the server can spawn a dynamic-slot aircraft for a player (`create_client_aircraft`) with the planned loadout, on the ground and in the air (`isInAir`). (2) How many F10 drawings, redrawn how often, before the server or clients slow down. (3) Opt-in client script: does a custom DCS window (dxgui) work under Linux, does the stock `RPC` channel carry campaign data, can the script spawn the player into a flight? (4) Walking to the jet: can a pilot who climbs out of a parked jet walk, can the server follow them, and can walking up to a flight's parked jet put them in it? Fallbacks are a unit the engine moves for them, or Combined Arms for owners. **Parts 1, 2 and 4 test ready:** Run 14 in [testing in DCS](testing-in-dcs.md). Part 3 (the client script) waits for what Run 14 finds: it's the last resort. |
 
 ## Phase 2: build the playable campaign
 
@@ -95,7 +96,7 @@ Roughly in this order; proofs gate their items.
 9. **15** Lasting damage (P11).
 10. **30** CSAR (P12).
 11. **26** Editing flight plan and loadout (P13), then **27** building your own package.
-12. **1** remaining scenarios, **38** difficulty settings, **19** full.
+12. **1** remaining scenarios, **38** difficulty settings, **19** full, **40** deeper combat.
 13. **17** Running the war without DCS (mostly done by P7 and D1), **18** full server operation.
 14. **34** Squadron life, stats page, time-lapse replay.
 15. **36** AWACS calls (text first; P16 for voice).
@@ -149,6 +150,8 @@ warfare (P18), **37** scenario editor.
 | 37 Scenario editor | Build | 5 |
 | 38 Difficulty settings | Build | 4 |
 | 39 Kneeboard pages | Prove (P5) + build | 1, 2 |
+| 40 Deeper abstract combat | Build | 4 |
+| 41 Briefing room in DCS | Prove (P19) + build | 1, 4 |
 | Discord notifications | Build | 2 (basic), 4 |
 | Time-lapse replay | Build | 4 |
 | Stats page | Build | 4 |

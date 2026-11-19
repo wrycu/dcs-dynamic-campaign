@@ -246,6 +246,7 @@ local B = {
   hit_last = {},    -- target name -> model time of last forwarded hit
   left = {},        -- unit name -> model time a player left it (slot change / disconnect)
   ejected = {},     -- unit name -> true once its pilot ejected
+  walkers = {},     -- ejected pilots, followed in telemetry: key -> { obj, from (unit description) }
   menus = {},       -- audience -> { kind, id, path }
   config = cfg,
 }
@@ -382,6 +383,17 @@ local function report_loss(o)
   end
 end
 
+-- An ejected pilot (the object DCS hands the ejection events) is followed in telemetry, to see
+-- whether the server knows where a pilot walking on the ground is (proof P19).
+local function follow_walker(o, from)
+  local ok, key = pcall(function() return tostring(o.id_ or o:getName()) end)
+  if not ok or not key then return end
+  local w = B.walkers[key] or { obj = o }
+  w.obj = o
+  w.from = w.from or from
+  B.walkers[key] = w
+end
+
 local event_map = {
   [E.S_EVENT_BIRTH] = function(e)
     local d = describe(e.initiator)
@@ -410,7 +422,9 @@ local event_map = {
   [E.S_EVENT_EJECTION] = function(e)
     local d = describe(e.initiator)
     if d and d.name then B.ejected[d.name] = true end
-    emit("ejection", { unit = d })
+    local pilot = e.target and describe(e.target) or nil
+    if e.target then follow_walker(e.target, d) end
+    emit("ejection", { unit = d, pilot = pilot })
   end,
   [E.S_EVENT_PILOT_DEAD] = function(e)
     local d = describe(e.initiator)
@@ -418,6 +432,7 @@ local event_map = {
     emit("pilot_dead", { unit = d })
   end,
   [E.S_EVENT_LANDING_AFTER_EJECTION] = function(e)
+    if e.initiator then follow_walker(e.initiator, nil) end
     emit("landing_after_ejection", { unit = describe(e.initiator), place = place_name(e) })
   end,
   [E.S_EVENT_PLAYER_ENTER_UNIT] = function(e) emit("player_enter_unit", { unit = describe(e.initiator) }) end,
@@ -681,6 +696,18 @@ end
 
 function commands.draw(d) draw_shape(d) end
 
+-- Many shapes in one command: { items = [draw data, ...] }. Returns how many, and how long DCS
+-- took (ms of real time), to measure what the F10 map can carry.
+function commands.draw_batch(d)
+  local t0 = os.clock()
+  local n = 0
+  for _, item in ipairs(d.items or {}) do
+    draw_shape(item)
+    n = n + 1
+  end
+  return { drawn = n, ms = (os.clock() - t0) * 1000 }
+end
+
 local SMOKE = { green = 0, red = 1, white = 2, orange = 3, blue = 4 }
 
 -- Coloured smoke on the ground at pos. DCS smoke lasts about 5 minutes.
@@ -843,6 +870,24 @@ function commands.query(d)
       return true
     end)
     return { total = total, counts = counts, found = found }
+  elseif d.what == "objects" then
+    -- Units, weapons, statics and cargo within radius (m) of center, up to d.limit (50): to find
+    -- objects the events don't hand over, e.g. a pilot walking after ejecting.
+    local found = {}
+    local limit = d.limit or 50
+    local vol = { id = world.VolumeType.SPHERE,
+                  params = { point = { x = d.center.x, y = land.getHeight({ x = d.center.x, y = d.center.y }),
+                                       z = d.center.y }, radius = d.radius } }
+    local cats = { Object.Category.UNIT, Object.Category.WEAPON, Object.Category.STATIC, Object.Category.CARGO }
+    world.searchObjects(cats, vol, function(o)
+      if #found < limit then
+        local x = describe(o) or {}
+        pcall(function() x.id = o.id_ end)
+        found[#found + 1] = x
+      end
+      return true
+    end)
+    return { found = found }
   elseif d.what == "road_point" then
     -- Nearest point on the road network ("roads" or "railroads") to d.pos.
     local x, y = land.getClosestPointOnRoads(d.road or "roads", d.pos.x, d.pos.y)
@@ -911,7 +956,16 @@ local function telemetry()
       B.spawned[name] = nil
     end
   end
-  transport.send_volatile("telemetry", { players = players, groups = groups }, now())
+  local walkers = {}
+  for key, w in pairs(B.walkers) do
+    local alive = false
+    pcall(function() alive = w.obj:isExist() end)
+    local d = alive and describe(w.obj) or {}
+    d.key, d.exists, d.from = key, alive, w.from
+    walkers[#walkers + 1] = d
+    if not alive then B.walkers[key] = nil end
+  end
+  transport.send_volatile("telemetry", { players = players, groups = groups, walkers = walkers }, now())
 end
 
 local next_telemetry = 0

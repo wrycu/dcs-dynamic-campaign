@@ -86,6 +86,8 @@ class EventKind:
     PLAYER_SLOT = "player_slot"
     SLOT_DENIED = "slot_denied"
     MISSION_LOAD = "mission_load"
+    CHAT_COMMAND = "chat_command"    # chat starting with "!", not shown to other players
+    FRAME_STATS = "frame_stats"      # server frame times every 10 s
 
 
 # ---------- envelope ----------
