@@ -107,6 +107,8 @@ Reading the results:
 
 If step 5 lets you in with no `slot_denied`, DCS does not run `onPlayerTryChangeSlot` for the host. Slot gating would then need a second client (or a dedicated server) to test.
 
+**Verified on a dedicated server (Run 8 Part A, 2026-11-18):** a remote client's slot was refused with the chat message, then allowed after the rules changed; `player_slot`, `player_disconnect` and remote-player telemetry all arrived.
+
 To uninstall: `rm "$SG/Scripts/Hooks/campaign_hooks.lua"`.
 
 ## Run 3: bubble (`campaign-smoke.miz` + `tools.bubble_demo`)
@@ -379,8 +381,8 @@ Time acceleration isn't available on a server, so this run doesn't wait for Red 
 
 Paths on the **server** (set to match it):
 ```bash
-SDCS="<server>/drive_c/Program Files/Eagle Dynamics/DCS World"    # its DCS install
-SSG="<server>/drive_c/users/<user>/Saved Games/DCS.server"        # its Saved Games: the folder with Config/serverSettings.lua
+SDCS="/home/dcs/.wine/drive_c/DCS_server"                                  # its DCS install
+SSG="/home/dcs/.wine/drive_c/users/dcs/Saved Games/DCS.server1"           # its Saved Games: the folder with Config/serverSettings.lua
 REPO="$HOME/dcs-dynamic-campaign"                                 # where the repo goes on the server
 ```
 
@@ -404,12 +406,16 @@ REPO="$HOME/dcs-dynamic-campaign"                                 # where the re
    mkdir -p "$SSG/Scripts/Hooks" && cp "$REPO/lua/hooks/campaign_hooks.lua" "$SSG/Scripts/Hooks/"
    grep -n "CAMPAIGN" "$SSG/Logs/dcs.log"   # after the restart: "campaign hooks loaded"
    ```
-5. **On your PC:** build the server mission, pointing its loader at the repo's path on the server (absolute, as the server sees it), and copy it over:
+5. **Build the server mission on the server**, straight into its Missions folder. It needs `luajit` (`sudo apt install luajit`) and your template mission copied over once (from your PC: `scp "$SG/Missions/a2a.miz" "<server>:$SSG/Missions/"`).
+   - The loader needs a path DCS can see. Many headless Wine setups have no `Z:` drive (so `/home/...` is invisible to DCS); link the repo into `drive_c` and use a `C:` path:
    ```bash
-   python3 -m tools.build_test_missions --server /home/<user>/dcs-dynamic-campaign
-   scp build/campaign-server.miz "<server>:$SSG/Missions/"
+   ln -sfn "$REPO" ~/.wine/drive_c/dcs-dynamic-campaign
+   cd "$REPO" && python3 -m tools.build_test_missions --server 'C:\dcs-dynamic-campaign' \
+     --template "$SSG/Missions/a2a.miz" --out "$SSG/Missions"
    ```
-   `campaign-server.miz` is `campaign-smoke.miz` with the FA-18C as a **Client** slot and the bridge loaded from the server's copy of the repo. The loader line printed must show the server's path.
+   - The last line must show `['C:\\dcs-dynamic-campaign\\']`. If the server does have a `Z:` drive, `--server "$REPO"` also works.
+   - `campaign-server.miz` is `campaign-smoke.miz` with the FA-18C as a **Client** slot and the bridge loaded from the server's copy of the repo.
+   - After rebuilding, load the mission fresh from the mission list; a restart can keep running the old copy.
 6. **Server settings** (web GUI or `serverSettings.lua`): add `campaign-server.miz` to the mission list. Pausing is fine (the war pauses with the mission), but note what it's set to: paused until a client joins, or running.
 
 Run the engine on the server in `tmux` (or `screen`), so it survives your SSH session, and keep a log with `tee`.
@@ -436,7 +442,11 @@ Same scenario as Run 7 (Red Ferry, Blue Ferry, Blue CAS), plus two ghosts:
    ```bash
    cd "$REPO" && python3 -m tools.flight_bubble_demo --new --ghost 000/35 --ghost far 2>&1 | tee run8b.log
    ```
-2. On your PC, fetch the cartridge it wrote: `scp "<server>:dcs-dynamic-campaign/build/dtc/campaign_flights.dtc" "$SG/DTC/"`. Waypoints as in Run 7 (WP2 = Red Ferry's orbit = GHOST 1).
+2. On your PC, in the repo, write the cartridge (it doesn't depend on the server, so there is nothing to copy):
+   ```bash
+   python3 -c "from pathlib import Path; from tools.flight_bubble_demo import write_cartridge; write_cartridge(Path('$SG/DTC'))"
+   ```
+   Waypoints as in Run 7 (WP2 = Red Ferry's orbit = GHOST 1).
 3. Restart `campaign-server.miz` on the server. Expect `HELLO mission`, `GHOST 1 (000/35) placed`, `GHOST 2 (far) placed` and the `scenario: far base <name>` line.
 
 **Steps**
@@ -460,9 +470,10 @@ Same scenario as Run 7 (Red Ferry, Blue Ferry, Blue CAS), plus two ghosts:
    ```
    Expect `HELLO mission ... new_run=False`, the flights still in DCS kept (no duplicates, no respawns), and the clock carrying on.
 6. **Mission restart.** Restart the mission from the server (web GUI). Expect `new_run=True`: flights that were in DCS come back where the engine had them, the ghosts are drawn again, and the clock carries on from where it was.
+   Before this step, update the repo on the server: the restart loads the new bridge, which redraws flight markers under fresh ids. Expect the `Red Ferry [DCS]` / `Blue Ferry [DCS]` labels on your F10 map this time; before the fix they never reached the client.
 
 ### What to send back
-- `run8a.log` and `run8b.log` from the server (`scp "<server>:dcs-dynamic-campaign/run8*.log" .`).
+- `run8a.log` and `run8b.log` from the server: paste them, or `sudo cp` them to `/tmp` and copy them as your own user.
 - Part A: was the slot refused, then allowed?
 - Part B: for each step, pass or what happened instead. In particular: did Blue Ferry's ramp start at the far base work, and did you see Blue CAS on the ramp and Red Ferry on radar from your client?
 - The server's `dcs.log` if anything failed (`$SSG/Logs/dcs.log`; the `[campaign]` and `CAMPAIGN` lines).

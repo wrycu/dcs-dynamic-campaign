@@ -441,16 +441,26 @@ world.addEventHandler(handler)
 -- Commands: engine -> DCS
 -- ======================================================================================
 
-local function draw_shape(d)
-  local id = d.id
-  if type(id) ~= "number" then error("draw needs a numeric id") end
+-- Engine shape id -> the DCS mark id currently showing it. Every draw uses a fresh DCS id and
+-- removes the old mark afterwards. On a dedicated server (Run 8), shapes drawn once reached
+-- clients but shapes redrawn by removing and re-adding the same id did not. Fresh ids also
+-- stop the flicker between remove and add.
+local marks = {}
+local next_mark = 7000000  -- well above the ids DCS gives marks players place themselves
+
+local function remove_shape(id)
+  local real = marks[id]
+  marks[id] = nil
+  trigger.action.removeMark(real or id)
+end
+
+local function draw_new(d, id)
   local kind, aud = parse_audience(d.audience)
   local color = d.color or { 1, 1, 1, 1 }
   local fill = d.fill or { 0, 0, 0, 0 }
   local line_type = d.line_type or 1
   local read_only = d.read_only ~= false
   local message = d.message or ""
-  trigger.action.removeMark(id)  -- draw replaces an existing shape with the same id
 
   local shape = d.shape
   if shape == "mark" then
@@ -485,6 +495,15 @@ local function draw_shape(d)
   else
     error("unknown shape " .. tostring(shape))
   end
+end
+
+local function draw_shape(d)
+  if type(d.id) ~= "number" then error("draw needs a numeric id") end
+  next_mark = next_mark + 1
+  draw_new(d, next_mark)
+  local old = marks[d.id]
+  marks[d.id] = next_mark
+  if old then trigger.action.removeMark(old) end
 end
 
 local function menu_selected(arg)
@@ -675,7 +694,7 @@ end
 
 function commands.undraw(d)
   local ids = d.ids or { d.id }
-  for _, id in ipairs(ids) do trigger.action.removeMark(id) end
+  for _, id in ipairs(ids) do remove_shape(id) end
 end
 
 function commands.message(d)

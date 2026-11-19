@@ -34,7 +34,7 @@ In order of risk. Each is a short spike with a pass/fail question.
 
 | | Proof | Items | Question |
 |---|---|---|---|
-| P1 | Multiplayer on a dedicated server | all | Do the bridge, Hooks, bubbles, slot gating and saves work on a dedicated server with two or more clients, players far apart, joining and leaving? Everything so far was tested in single player. |
+| P1 | Multiplayer on a dedicated server | all | Do the bridge, Hooks, bubbles, slot gating and saves work on a dedicated server with two or more clients, players far apart, joining and leaving? Everything so far was tested in single player. **Part A passed (2026-11-18):** bridge and Hooks on a Linux dedicated server, slot gating for a remote client. |
 | P2 | Player slots | 2, 11 | DCS 2.9 has dynamic slots (players pick an aircraft at an airbase, limited by the warehouse; seen in `MultiplayerSelectDynamicDialog.lua`). Can they replace fixed slots? Can the engine control them per base, and match a player who spawns to the flight they picked? Can anyone join a flight that is already airborne? |
 | P3 | Ground movement at scale | 8 | Can moving ground formations follow roads in DCS, despawn and respawn mid-route, and stay smooth with many groups moving? Is `land.findPathOnRoads` (or similar) usable from the engine? |
 | P4 | Mission rebuild and restart | 12, 18 | Can the engine write a .miz with the campaign's date, time and weather, have the server load it (Hooks `net.load_mission`), and carry on with no one restarting by hand? |
