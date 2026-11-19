@@ -219,7 +219,7 @@ class Probe:
         cmd, rest = words[0].lower(), words[1:]
         try:
             if cmd == "help":
-                await self.reply(pid, "-flights | -join N [cold|hot|air] | -spec | -draw N | -churn S|off | "
+                await self.reply(pid, "-flights | -join N [cold|hot|air] [nopush] | -spec [side] | -draw N | -churn S|off | "
                                       "-clear | -where | -near [R] | -slot ID [side]")
             elif cmd == "flights":
                 await self.reply(pid, "\n".join(f"{f.n}: {f.callsign}, {f.mission} ({f.loadout})" for f in FLIGHTS))
@@ -230,8 +230,11 @@ class Probe:
                 r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": side, "slot": rest[0]})
                 await self.reply(pid, f"force_slot to side {side} slot {rest[0]}: {r}")
             elif cmd == "spec":
-                r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": 0, "slot": ""})
-                await self.reply(pid, f"force_slot to spectators: {r}")
+                # Run 14: a push into a slot only took when the player was a BLUE spectator, so stay blue
+                # unless asked (-spec 0 = neutral).
+                side = int(rest[0]) if rest else BLUE_ID
+                r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": side, "slot": ""})
+                await self.reply(pid, f"force_slot to side {side} spectators: {r}")
             elif cmd == "draw":
                 await self.draw_extra(int(rest[0]) if rest else 100)
                 await self.reply(pid, f"{self.extra} extra shapes on the map")
