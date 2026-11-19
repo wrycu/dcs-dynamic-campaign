@@ -171,6 +171,10 @@ class Probe:
         try:
             spots = await self.call(self.mission, "query", {"what": "parking", "airbase": AIRBASE, "free_only": True})
             free = [s for s in spots.get("spots", []) if not s.get("occupied")]
+            # Dynamic slots need stock; the mission ships with none (Run 14). Also lets -join's
+            # create_client_aircraft take a Hornet from the base, as the slot screen does.
+            await self.call(self.mission, "warehouse_set", {"airbase": AIRBASE, "aircraft": {HORNET: 4}})
+            print(f"STOCK   {AIRBASE}: {HORNET} x4", flush=True)
             ab = await self.call(self.mission, "query", {"what": "airbase", "airbase": AIRBASE})
             center = ab["pos"]
             free.sort(key=lambda s: math.dist((s["pos"]["x"], s["pos"]["y"]), (center["x"], center["y"])))
