@@ -71,6 +71,7 @@ SERVER_PLAYER_ID = 1   # a dedicated server is always player 1
 # script, spawned into it. Run 14d: a mission slot is the join that works; dynamic slots don't.
 WALK_SLOT = "3"
 EJECTION_MATCH_M = 3000.0   # a walker is the player who ejected within this distance
+OWN_JET_M = 30.0            # jets this close to where the player ejected are their own; ignored
 
 FLIGHTS = [
     Flight(1, "Colt 1", "CAS south of Damascus", "AIM-9M*2, AIM-7M*2, FUEL*2"),
@@ -384,12 +385,15 @@ class Probe:
             r = await self.call(self.mission, "query", {"what": "objects", "center": pos, "radius": REACH_M, "limit": 10})
         except BridgeError:
             r = {}
-        jets = [o for o in (r.get("found") or []) if o.get("type") == HORNET]
+        # Ignore the jet the pilot ejected from: they land next to it (Run 14e: sent straight back in).
+        name = self.owner_of(w)
+        ej = [p for n, p, _ in self.ejections if n == name]
+        jets = [o for o in (r.get("found") or []) if o.get("type") == HORNET and o.get("pos")
+                and not (ej and math.dist((o["pos"]["x"], o["pos"]["y"]), (ej[-1]["x"], ej[-1]["y"])) <= OWN_JET_M)]
         if not jets:
             self.joined_by_walk.discard(w["key"])
             return
         jet = jets[0]
-        name = self.owner_of(w)
         label = next((f.callsign for f in FLIGHTS if f.static and f.static == jet.get("name")), None) or jet.get("name")
         print(f"REACH   pilot on foot {w['key']} ({name or 'unknown player'}) reached Hornet {label} "
               f"({jet.get('category')}) at {_fmt(jet.get('pos'))}", flush=True)
