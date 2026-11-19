@@ -451,6 +451,38 @@ What DCS offers (checked in the 2.9 install, 2026-11-19):
   - **One-click join:** the script could call `create_client_aircraft` itself, exactly as the
     slot dialog does, with the flight's loadout.
 
+**A basis for the room itself: VNAO Ready Room.** The user picked this (2026-11-19) as a strong
+starting point for the actual briefing room, since it already does much of what we want. Read from
+the v0.181 download (readme and Lua only; nothing run):
+- **What it is:** a squadron ready room by VNAO Simulations (Particleman), v0.18 from June 2020.
+  It's a flyable aircraft mod (`Saved Games\DCS\Mods\aircraft`), built as a helicopter with its own
+  small flight model DLL (`bin/VNAO_RR.dll`, closed source). It's a 25-seat multicrew aircraft
+  (`crew_size = 25`, roles "seat 01"...), so pilots slot into its seats like any multicrew jet.
+  It's placed in the mission like a helicopter, on land or on a carrier, for red or blue.
+- **What it does:** VR, TrackIR and 2D; seat 1 runs the slideshow and a dimmable light, and has
+  the comms menu (audio, mission triggers). Ambient sound, squadron liveries for posters and
+  chairs, and the number keys move you between seats.
+- **How the slides work:** 20 fixed images, `DROP_SLIDES_HERE/VNAORR_slide_01..20.tga`, drawn on
+  the screen by the cockpit scripts. Only the slide *number* is shared in multiplayer (an
+  animation argument, 399, which seat 1 steps). So **every player shows their own local copy** of
+  the images: the server can't send pictures. A campaign briefing (war map, the flight's route and
+  loadout) would need the images on each player's PC before they look, e.g. written there by the
+  opt-in client script, and DCS may only load them when the cockpit loads.
+- **Fits with what Run 14 found:** the room is a real slot, so pilots sit in a 3D room instead of
+  on the spectator F10 map, and the engine could move them on to their flight's mission-built
+  Client slot with `net.force_player_slot`.
+- **To check before building on it:**
+  - Does it still load in DCS 2.9 (its plugin version string says 0.16; built for 2.5)?
+  - Every player needs the mod installed, and so does the dedicated server (it's an aircraft
+    type). So it's opt-in, and the spectator F10 map stays as the no-mod fallback.
+  - Does `force_player_slot` move a pilot from a ready-room seat straight into a flight's slot,
+    or only from spectators? Run 14 only proved the move from blue spectators.
+  - Can the screen show engine-made images: does DCS reload the `.tga` files when a pilot enters
+    the room, or only when DCS starts? Could the cockpit scripts draw a live map instead?
+  - The readme has no license. Ask VNAO before shipping it or a changed copy.
+- **Links:** [the mod](https://www.digitalcombatsimulator.com/en/files/3310351),
+  [the VR ready room thread](https://forum.dcs.world/topic/186044-vnao-vr-ready-room-mod).
+
 ## Minor improvements
 
 Small additions that make the campaign easier to use; each can be done once the parts it

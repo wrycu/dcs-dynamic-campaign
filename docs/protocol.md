@@ -128,6 +128,7 @@ Each message's `data.kind` is one of:
 | `slot_denied` | `player_id`, `ucid`, `name`, `side`, `slot`, `reason` |
 | `chat_command` | `player_id`, `ucid`, `name`, `side`, `slot`, `text`: chat starting with `-` (the `-` removed). The other players don't see it. |
 | `frame_stats` | `frames`, `avg_ms`, `max_ms`, `over_50ms`, `seconds`: the server's frame times, every 10 s of real time |
+| `client_hello` | `player_id`, `version`: that player runs the optional client script (`lua/client/campaign_client.lua`); sent on each mission load |
 | `mission_load` | `stage` (`requested`, `begin`, `end`, `start`, `stop`), `file` or `path`, `ok`/`error` (for `requested`), `real_time` |
 
 The engine links mission events to UCIDs by player name. Names are unique on a server at any one time.
@@ -199,6 +200,7 @@ Notes on `spawn_group` and `despawn_group`:
 | `chat_to` | `player_id?`, `text`: a chat line to one player, or to everyone without `player_id`. |
 | `players` | – Returns every connected player: `[{id, name, ucid, side, slot}]`. |
 | `force_slot` | `player_id`, `side`, `slot` (`0` and `""` for spectators): `net.force_player_slot`. Returns `{ok}`. |
-| `spawn_for` | `player_id`, `spawn`: a dynamic-slot spawn for that player, the fields the slot screen passes to `DCS.create_client_aircraft` (`airdromeId`, `isAirdrome`, `coalition`, `coalitionId`, `typeLA`, `category`, `numFuel` kg, `numFlare`, `numChaff`, `gun`, `ammoType`, `liveryEntry`, `isHot`, `isInAir`, ...). Pylons go as `pylon_list: [{num, CLSID}]` (JSON can't carry numeric keys). `userId` and `nickName` default to the player. Returns `{result}`, what DCS returned. Proof P19: does it work for another player? |
+| `spawn_for` | `player_id`, `spawn`: a dynamic-slot spawn for that player, the fields the slot screen passes to `DCS.create_client_aircraft` (`airdromeId`, `isAirdrome`, `coalition`, `coalitionId`, `typeLA`, `category`, `numFuel` kg, `numFlare`, `numChaff`, `gun`, `ammoType`, `liveryEntry`, `isHot`, `isInAir`, ...). Pylons go as `pylon_list: [{num, CLSID}]` (JSON can't carry numeric keys). `userId` and `nickName` default to the player. Returns `{result}`, what DCS returned. Run 14: DCS creates the slot and assigns it, but the player's own DCS never enters it; use `force_slot` into a mission slot, or the client script. |
+| `client_rpc` | `player_id`, `method`, `args` (list): an event to that player's optional client script over the stock RPC channel. Methods: `campaignJoin` (args `[spawn]`, the `spawn_for` fields: the client spawns and enters, as its slot screen does) and `campaignEnter` (no args: the client calls `net.spawn_player()`). Fire and forget; a player without the script ignores it. |
 
 `onPlayerTryChangeSlot` enforces these rules on the server. A denied player gets the reason as a chat message, and the engine receives `slot_denied`.

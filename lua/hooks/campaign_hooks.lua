@@ -14,7 +14,8 @@ What it does:
   * Chat commands: chat starting with "-" goes to the engine (`chat_command`) instead of the
     other players; the engine answers with `chat_to`.
   * Puts players into aircraft (`spawn_for`, `force_slot`) and reports the server's frame times
-    (`frame_stats`), for proof P19.
+    (`frame_stats`), for proof P19. Talks to the optional client script (`client_rpc`,
+    `client_hello`; lua/client/campaign_client.lua).
 
 Optional: define a global CampaignHooksConfig table before this file loads to override `defaults`.
 
@@ -341,6 +342,24 @@ function commands.spawn_for(d)
   local ok, res = pcall(create, spawn)
   if not ok then error("create_client_aircraft: " .. tostring(res)) end
   return { result = res }
+end
+
+-- P19 part 3: talk to the optional client script (lua/client/campaign_client.lua) over the stock
+-- RPC channel. data: { player_id, method, args = [...] }. Fire and forget: a player without the
+-- script just ignores it (DCS logs "Method not found" on their side).
+local has_rpc, RPC = pcall(require, "RPC")
+
+function commands.client_rpc(d)
+  if not has_rpc then error("RPC module not available") end
+  local args = type(d.args) == "table" and d.args or {}
+  RPC.sendEvent(tonumber(d.player_id), tostring(d.method), unpack(args))
+end
+
+if has_rpc then
+  -- The client script says hello on each mission load.
+  function RPC.method.campaignClientHello(sender_id, version)
+    emit("client_hello", { player_id = sender_id, version = version })
+  end
 end
 
 function H.on_message(msg)

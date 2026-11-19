@@ -86,6 +86,7 @@ class Probe:
     walkers: dict[str, dict] = field(default_factory=dict)    # walker key -> last report
     joined_by_walk: set[str] = field(default_factory=set)
     slot_waiters: dict[int, asyncio.Future] = field(default_factory=dict)   # player id -> next slot
+    client_scripts: set[int] = field(default_factory=set)   # player ids that said client_hello
 
     # ---------- bridge callbacks ----------
 
@@ -119,6 +120,10 @@ class Probe:
             print(f"CHAT    {d.get('name')} (id {d.get('player_id')}, side {d.get('side')}, slot {d.get('slot')!r}): "
                   f"-{d.get('text')}", flush=True)
             asyncio.create_task(self.command(d))
+        elif kind == "client_hello":
+            self.client_scripts.add(d.get("player_id"))
+            print(f"CLIENT  player id {d.get('player_id')} has the client script (version {d.get('version')})",
+                  flush=True)
         elif kind == "frame_stats":
             print(f"FRAME   server avg {d['avg_ms']:.1f} ms, max {d['max_ms']:.0f} ms, {d['over_50ms']} frames over "
                   f"50 ms in {d['seconds']:.0f} s; {self.extra} extra shapes"
@@ -229,7 +234,7 @@ class Probe:
         cmd, rest = words[0].lower(), words[1:]
         try:
             if cmd == "help":
-                await self.reply(pid, "-flights | -join N [cold|hot|air] [nopush] | -spec [side] | -draw N | -churn S|off | "
+                await self.reply(pid, "-flights | -join N [cold|hot|air] [nopush|client] | -enter | -spec [side] | -draw N | -churn S|off | "
                                       "-clear | -where | -near [R] | -slot ID [side]")
             elif cmd == "flights":
                 await self.reply(pid, "\n".join(f"{f.n}: {f.callsign}, {f.mission} ({f.loadout})" for f in FLIGHTS))
@@ -239,6 +244,11 @@ class Probe:
                 side = int(rest[1]) if len(rest) > 1 else BLUE_ID
                 r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": side, "slot": rest[0]})
                 await self.reply(pid, f"force_slot to side {side} slot {rest[0]}: {r}")
+            elif cmd == "enter":
+                # Part 3: the client script calls net.spawn_player(), to enter a slot the server gave us.
+                await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignEnter", "args": []})
+                await self.reply(pid, "asked your client script to enter your slot"
+                                      + ("" if pid in self.client_scripts else " (no client_hello from you yet)"))
             elif cmd == "spec":
                 # Run 14: a push into a slot only took when the player was a BLUE spectator, so stay blue
                 # unless asked (-spec 0 = neutral).
@@ -284,7 +294,7 @@ class Probe:
 
     async def join(self, pid: int, name: str | None, rest: list[str]) -> None:
         if not rest:
-            await self.reply(pid, "usage: -join N [cold|hot|air] [nopush] [cat=airplane] [fuel=0.6]")
+            await self.reply(pid, "usage: -join N [cold|hot|air] [nopush|client] [cat=airplane] [fuel=0.6]")
             return
         flight = next((f for f in FLIGHTS if f.n == int(rest[0])), None)
         if flight is None:
@@ -295,6 +305,13 @@ class Probe:
         spawn = self.spawn_data(pid, flight, mode, opts)
         print(f"JOIN    {name} (id {pid}) -> {flight.callsign} {mode}: {len(spawn['pylon_list'])} pylons, "
               f"fuel {spawn['numFuel']:.0f} kg, category {spawn['category']}", flush=True)
+        if "client" in rest:
+            # Part 3: the player's own DCS spawns and enters, as its slot screen does.
+            await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignJoin", "args": [spawn]})
+            print(f"JOIN    asked {name}'s client script to spawn {flight.callsign}", flush=True)
+            await self.reply(pid, f"{flight.callsign} ({mode}): asked your client script to spawn you"
+                                  + ("" if pid in self.client_scripts else " (no client_hello from you yet)"))
+            return
         waiter = self.slot_waiters[pid] = asyncio.get_running_loop().create_future()
         t0 = time.monotonic()
         r = await self.call(self.hooks, "spawn_for", {"player_id": pid, "spawn": spawn})
