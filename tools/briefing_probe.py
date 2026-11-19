@@ -182,7 +182,7 @@ class Probe:
             await self.call(self.mission, "draw", {"id": FIXED_IDS[10], "audience": "all", "shape": "text",
                                                    "pos": {"x": x, "y": y}, "text": "P19: drawn for ALL",
                                                    "font_size": 16, "color": [1, 1, 1, 1], "fill": [0, 0, 0, 0.6]})
-            await self.call(self.mission, "draw", {"id": FIXED_IDS[11], "audience": "blue", "shape": "text",
+            await self.call(self.mission, "draw", {"id": FIXED_IDS[11], "audience": "coalition:blue", "shape": "text",
                                                    "pos": {"x": x - 1 * NM, "y": y},
                                                    "text": "P19: drawn for BLUE only", "font_size": 16,
                                                    "color": [0.4, 0.6, 1, 1], "fill": [0, 0, 0, 0.6]})
