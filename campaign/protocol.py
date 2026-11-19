@@ -82,6 +82,7 @@ class EventKind:
     # hooks (by UCID)
     PLAYER_CONNECT = "player_connect"
     PLAYER_DISCONNECT = "player_disconnect"
+    SLOT_TRY = "slot_try"
     PLAYER_SLOT = "player_slot"
     SLOT_DENIED = "slot_denied"
 

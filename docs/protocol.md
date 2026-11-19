@@ -120,7 +120,8 @@ Each message's `data.kind` is one of:
 |---|---|
 | `player_connect` | `player_id`, `ucid`, `name` |
 | `player_disconnect` | `player_id`, `ucid`, `reason` |
-| `player_slot` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type` |
+| `slot_try` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry`: every slot attempt, before the rules. `entry` is DCS's slot listing (`unitId`, `type`, `groupName`, `airdromeId`, ...) or null |
+| `player_slot` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry` |
 | `slot_denied` | `player_id`, `ucid`, `name`, `side`, `slot`, `reason` |
 
 The engine links mission events to UCIDs by player name. Names are unique on a server at any one time.
@@ -186,6 +187,6 @@ Notes on `spawn_group` and `despawn_group`:
 
 | op | data |
 |---|---|
-| `slot_rules` | `allowed_sides` (default `[0, 2]`, spectators and blue), `deny: {ucid: reason}`. Replaces the whole rule set. |
+| `slot_rules` | `allowed_sides` (default `[0, 2]`, spectators and blue), `deny: {ucid: reason}`, `deny_airdromes: {airdrome id: reason}` (slots DCS lists at that airdrome). Replaces the whole rule set. |
 
 `onPlayerTryChangeSlot` enforces these rules on the server. A denied player gets the reason as a chat message, and the engine receives `slot_denied`.

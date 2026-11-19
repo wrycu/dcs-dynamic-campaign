@@ -12,6 +12,8 @@ params.lua returns a table:
   player_x, player_y  where to move the player group (DCS map coords), or nil
   player_alt      altitude for the player group's units and waypoints (m), or nil
   clients         true: player aircraft become Client slots (for a multiplayer server)
+  dynamic         list of airdrome ids: each becomes BLUE with dynamic slots (players pick an
+                  aircraft there, from the warehouse stock, which starts empty), hot start allowed
 ]]
 
 local params = dofile(arg[1])
@@ -151,6 +153,17 @@ assert(ap, "warehouses has no airport " .. tostring(params.airdrome_id))
 ap.coalition = "BLUE"
 ap.unlimitedAircrafts = false
 ap.unlimitedMunitions = true  -- AI ramp starts take weapons from stock; we don't track munitions yet
+for _, id in ipairs(params.dynamic or {}) do
+  local dap = warehouses.airports[id]
+  assert(dap, "warehouses has no airport " .. tostring(id))
+  dap.coalition = "BLUE"
+  dap.unlimitedAircrafts = false
+  dap.unlimitedMunitions = true
+  dap.aircrafts = {}  -- empty stock; the engine sets it at runtime
+  dap.dynamicSpawn = true
+  dap.allowHotStart = true
+end
 write_table(params.warehouses_out, "warehouses", warehouses)
 
-print(string.format("patched: %d player group(s), airport %d BLUE, limited aircraft", #players, params.airdrome_id))
+print(string.format("patched: %d player group(s), airport %d BLUE, limited aircraft%s", #players, params.airdrome_id,
+  (params.dynamic and #params.dynamic > 0) and (", dynamic slots at " .. table.concat(params.dynamic, ", ")) or ""))

@@ -242,7 +242,7 @@ end
 
 local H = {
   run_id = string.format("%.0f", socket.gettime() * 1000000),  -- per DCS process start
-  rules = { sides = set_of(cfg.allowed_sides), deny = {} },    -- deny: ucid -> reason
+  rules = { sides = set_of(cfg.allowed_sides), deny = {}, airdromes = {} },  -- ucid / airdrome id -> reason
   ucids = {},                                                  -- player id -> ucid
 }
 CampaignHooks = H
@@ -264,13 +264,18 @@ end
 
 local commands = {}
 
--- data: { allowed_sides = { 0, 2 }, deny = { [ucid] = "reason" } }  (replaces the whole table)
+local function reasons(t)
+  local out = {}
+  for k, reason in pairs(type(t) == "table" and t or {}) do out[tonumber(k) or k] = tostring(reason) end
+  return out
+end
+
+-- data: { allowed_sides = { 0, 2 }, deny = { [ucid] = "reason" }, deny_airdromes = { [id] = "reason" } }
+-- (replaces the whole table). deny_airdromes refuses slots DCS lists at that airdrome, which
+-- includes dynamic slots if DCS asks this hook about them (proof P2 finds out).
 function commands.slot_rules(d)
-  local deny = {}
-  for ucid, reason in pairs(type(d.deny) == "table" and d.deny or {}) do
-    deny[ucid] = tostring(reason)
-  end
-  H.rules = { sides = set_of(d.allowed_sides or cfg.allowed_sides), deny = deny }
+  H.rules = { sides = set_of(d.allowed_sides or cfg.allowed_sides), deny = reasons(d.deny),
+              airdromes = reasons(d.deny_airdromes) }
 end
 
 function H.on_message(msg)
@@ -323,16 +328,49 @@ callbacks.onPlayerDisconnect = safe("onPlayerDisconnect", function(id, err_code)
   H.ucids[id] = nil
 end)
 
+local SIDE_NAMES = { [1] = "red", [2] = "blue" }
+
+-- The getAvailableSlots entry for a slot id, with its plain fields only. Fixed slots list
+-- unitId (dynamic ones may carry an "_<place>" suffix, see MultiplayerSelectDynamicDialog.lua),
+-- type, role, callsign, groupName, and for slots at an airbase airdromeId / helipadId.
+local function slot_entry(side, slot)
+  if slot == nil or slot == "" then return nil end
+  for _, key in ipairs({ tonumber(side), SIDE_NAMES[tonumber(side)] }) do
+    local ok, list = pcall(Sim.getAvailableSlots, key)
+    if ok and type(list) == "table" then
+      for _, v in pairs(list) do
+        local uid = tostring(v.unitId)
+        if uid == tostring(slot) or uid:match("^(.-)_[^_]*$") == tostring(slot) then
+          local e = {}
+          for k, x in pairs(v) do
+            local t = type(x)
+            if t == "string" or t == "number" or t == "boolean" then e[k] = x end
+          end
+          return e
+        end
+      end
+    end
+  end
+  return nil
+end
+
 -- Return false to deny; return nil (not true) to allow so other hooks still get a say.
 callbacks.onPlayerTryChangeSlot = safe("onPlayerTryChangeSlot", function(id, side, slot)
   if not is_tracked_player(id) then return nil end
   local info = net.get_player_info(id) or {}
   local ucid = info.ucid or H.ucids[id]
+  local entry = slot_entry(side, slot)
+  local unit_type
+  if slot and slot ~= "" then pcall(function() unit_type = Sim.getUnitType(slot) end) end
+  emit("slot_try", { player_id = id, ucid = ucid, name = info.name, side = side, slot = slot,
+                     unit_type = unit_type, entry = entry })
   local reason
   if not H.rules.sides[tonumber(side)] then
     reason = cfg.side_denied_reason
   elseif ucid and H.rules.deny[ucid] then
     reason = H.rules.deny[ucid]
+  elseif entry and entry.airdromeId and H.rules.airdromes[tonumber(entry.airdromeId)] then
+    reason = H.rules.airdromes[tonumber(entry.airdromeId)]
   end
   if not reason then return nil end
   net.send_chat_to(reason, id)
@@ -349,7 +387,7 @@ callbacks.onPlayerChangeSlot = safe("onPlayerChangeSlot", function(id)
   end
   emit("player_slot", {
     player_id = id, ucid = info.ucid or H.ucids[id], name = info.name,
-    side = info.side, slot = info.slot, unit_type = unit_type,
+    side = info.side, slot = info.slot, unit_type = unit_type, entry = slot_entry(info.side, info.slot),
   })
 end)
 

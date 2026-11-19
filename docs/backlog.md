@@ -224,6 +224,9 @@ ground fight resolved in the engine.
 - Scheduled mission restarts that rebuild the .miz (item 12) and bring players back.
 - Recovery when either side crashes: the engine restarting against a running mission is done
   (see [saves](saves.md)); DCS crashing mid-session needs the reverse.
+- Server settings for a campaign: pause when no players are connected (the campaign clock only
+  runs while people play, D1), and F10 showing only your own side (already the case for
+  coalition slots on the Run 8 server). Document them, and check them at connect.
 
 ## 19. Victory and defeat
 

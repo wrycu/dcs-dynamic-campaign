@@ -35,6 +35,8 @@ AIRBASE_NAME = "Khalkhalah"
 # Airbase.getPoint() as DCS reports it (2.9.31); the demo places formations and cartridge waypoints from it.
 AIRBASE_XY = (-216085.3, 52697.5)
 TOWER_SCENERY_ID = "27320578"
+# Dynamic slots for proof P2 (airdrome ids from Mods/terrains/Syria/radio.lua, radioId 'airfield<id>_0').
+DYNAMIC_AIRDROMES = {"Khalkhalah": 18, "Tiyas": 39, "Marj Ruhayyil": 23}
 
 
 def lua_str(s: str) -> str:
@@ -77,7 +79,7 @@ trigger.action.outText("LOADER FAILED: could not load " .. rel .. " (see dcs.log
 
 
 def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, comment: str,
-          repo_path: str | None = None, clients: bool = False) -> Path:
+          repo_path: str | None = None, clients: bool = False, dynamic: list[int] | None = None) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
         with zipfile.ZipFile(template) as z:
@@ -97,6 +99,7 @@ def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, 
             f"player_y = {AIRBASE_XY[1]}",
             "player_alt = 3000",
             f"clients = {'true' if clients else 'false'}",
+            f"dynamic = {{ {', '.join(str(i) for i in dynamic or [])} }}",
         ]) + "\n}\n")
         r = subprocess.run(["luajit", str(PATCHER), str(params)], capture_output=True, text=True)
         if r.returncode != 0:
@@ -122,7 +125,8 @@ def main() -> None:
     ap.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE)
     ap.add_argument("--out", type=Path, default=ROOT / "build")
     ap.add_argument("--server", metavar="REPO_PATH",
-                    help="instead, build campaign-server.miz for a dedicated server: the bridge is loaded from "
+                    help="instead, build campaign-server.miz and campaign-slots.miz (dynamic slots, proof P2) "
+                         "for a dedicated server: the bridge is loaded from "
                          "the repo checkout at REPO_PATH on the server (a Linux path, read through Wine's Z: drive, "
                          "or a Windows path such as C:\\dcs-dynamic-campaign), and player aircraft are Client slots")
     args = ap.parse_args()
@@ -131,7 +135,9 @@ def main() -> None:
     if args.server:
         server = build(args.template, args.out, "campaign-server.miz", "lua/mission/campaign_bridge.lua", "",
                        "Load campaign bridge", args.server, clients=True)
-        print(f"wrote {server}\nrepo roots tried by the loader: {wine_roots(args.server)}")
+        slots = build(args.template, args.out, "campaign-slots.miz", "lua/mission/campaign_bridge.lua", "",
+                      "Load campaign bridge", args.server, clients=True, dynamic=list(DYNAMIC_AIRDROMES.values()))
+        print(f"wrote {server}\nwrote {slots}\nrepo roots tried by the loader: {wine_roots(args.server)}")
         return
     probe = build(args.template, args.out, "campaign-probe.miz", "lua/devtools/probe.lua",
                   f'ProbeConfig = {{ airbase = "{AIRBASE_NAME}", known_scenery_id = "{TOWER_SCENERY_ID}" }}\n',

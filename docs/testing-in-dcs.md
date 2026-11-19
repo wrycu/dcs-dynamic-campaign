@@ -107,7 +107,7 @@ Reading the results:
 
 If step 5 lets you in with no `slot_denied`, DCS does not run `onPlayerTryChangeSlot` for the host. Slot gating would then need a second client (or a dedicated server) to test.
 
-**Verified on a dedicated server (Run 8 Part A, 2026-11-18):** a remote client's slot was refused with the chat message, then allowed after the rules changed; `player_slot`, `player_disconnect` and remote-player telemetry all arrived.
+**Verified on a dedicated server (Run 8, 2026-11-18):** a remote client's slot was refused with the chat message, then allowed after the rules changed; `player_slot`, `player_disconnect` and remote-player telemetry all arrived.
 
 To uninstall: `rm "$SG/Scripts/Hooks/campaign_hooks.lua"`.
 
@@ -477,3 +477,67 @@ Same scenario as Run 7 (Red Ferry, Blue Ferry, Blue CAS), plus two ghosts:
 - Part A: was the slot refused, then allowed?
 - Part B: for each step, pass or what happened instead. In particular: did Blue Ferry's ramp start at the far base work, and did you see Blue CAS on the ramp and Red Ferry on radar from your client?
 - The server's `dcs.log` if anything failed (`$SSG/Logs/dcs.log`; the `[campaign]` and `CAMPAIGN` lines).
+
+### Results (2026-11-18/19, FA-18C, Linux dedicated server, one remote client)
+All six steps passed, after two fixes.
+- **Ghosts:** Red Ferry spawned at GHOST 1 and Blue Ferry ramp-started at Tiyas (GHOST 2, 101 nm out) with no player near either. Ramp starts away from Khalkhalah work.
+- **Seen from the client:** Blue CAS on the Khalkhalah ramp, the MiGs on radar, kills and losses on both sides counted. Players in a coalition slot see only their own side's units on F10; spectators see everything.
+- **Leave and rejoin, client crash:** nothing near a ghost left DCS; Status worked again after rejoining; no errors on the server.
+- **Engine restart:** `new_run=False`, flights in DCS kept, no duplicates, clock carried on.
+- **Mission restart:** `new_run=True`, Blue Ferry came back in the air where the engine had it, ghosts redrawn, clock carried on. Done twice.
+- The server pauses with no players connected, so the mission bridge only reconnects once someone is in (fits D1).
+
+Fixed during the run:
+1. **Flight labels never reached the client.** Shapes drawn once (the ghosts) showed; shapes redrawn by removing and re-adding the same id didn't. The bridge now draws each update under a fresh DCS id and removes the old one after. Verified: `Blue Ferry [DCS]` showed and moved on the client.
+2. **A flight passing near its landing field counted as landed.** Blue CAS came within 5 nm of Khalkhalah in the air, so the engine marked its LAND waypoint passed; after the mission restart it was sent home instead of respawning. A LAND waypoint is now passed only by landing. Covered by a test; not yet seen in DCS (needs a `--new` run).
+
+## Run 9: dynamic slots (`campaign-slots.miz` + `tools.slots_probe`), proof P2
+Same server and paths as Run 8. The question: can DCS 2.9's dynamic slots (pick an aircraft at an airbase, from its warehouse stock) replace fixed slots, with the engine in control? The mission has dynamic slots at three blue bases, and the probe sets them up differently:
+
+| Base | Hornets | What it tests |
+|---|---|---|
+| Khalkhalah | 4 | The normal case: pick, spawn, fly, land. Does the stock go down and back up? |
+| Tiyas | 2, refused by the Hooks | Does DCS ask `onPlayerTryChangeSlot` about a dynamic slot, and can the engine refuse it? |
+| Marj Ruhayyil | 0, then 2 from the F10 menu | Is an empty base hidden or blocked? Does a stock change during the mission reach the slot list? |
+
+The probe also spawns **Join Me**, two Hornets orbiting 3 nm north of Khalkhalah at 15,000 ft, with #2 a Client unit added at runtime. Can it be joined in the air?
+
+The fixed FA-18C slot from Run 8 is still there, to compare.
+
+**Setup**
+1. Copy the repo to the server as before (new: `tools/slots_probe.py`; changed: the Hooks, the mission builder).
+2. **Reinstall the Hooks** (they now report every slot attempt as `slot_try`) and restart the DCS server:
+   ```bash
+   cp "$REPO/lua/hooks/campaign_hooks.lua" "$SSG/Scripts/Hooks/"
+   ```
+3. Rebuild the missions; this now also writes `campaign-slots.miz`:
+   ```bash
+   cd "$REPO" && python3 -m tools.build_test_missions --server 'C:\dcs-dynamic-campaign' \
+     --template "$SSG/Missions/a2a.miz" --out "$SSG/Missions"
+   ```
+   Expect `campaign-slots.miz: patched: ... dynamic slots at 18, 39, 23`. Add `campaign-slots.miz` to the server's mission list.
+4. Start the probe, then load `campaign-slots.miz` fresh:
+   ```bash
+   cd "$REPO" && python3 -m tools.slots_probe 2>&1 | tee run9.log
+   ```
+   Expect `HELLO hooks`, `RULES slots at Tiyas ... refused`, then once someone is connected (the server may be paused until then) `HELLO mission`, `SPAWN Join Me ...` and `STOCK Khalkhalah: 4, Tiyas: 2, Marj Ruhayyil: 0`.
+
+**Steps**
+Note what the slot screen shows at each step; screenshots help.
+1. **The slot list.** Connect and stay in spectators. Look for the dynamic slots tab (the slot screen's tabs, or the map view).
+   - Which bases are listed, and with what Hornet counts? Is Marj Ruhayyil listed with 0, or missing?
+   - Is **Join Me** listed among the normal slots? (Probably not: DCS may not allow adding slots at runtime.)
+2. **Khalkhalah.** Pick a Hornet there (cold start is fine; try "Spawn Hot" too, later). Expect `HOOKS slot_try` and `HOOKS player_slot` lines with `entry`, and `EVENT birth` with `player` and `place`.
+   - Where did you spawn: on the ramp or in a shelter?
+   - Expect `STOCK Khalkhalah: 3`.
+   - Can you choose the loadout, fuel and livery in the dialog? Are loadouts limited (munitions are unlimited in this mission)?
+3. **Take off, fly a circuit, land at Khalkhalah, shut down.** Expect `takeoff`, `land` and `engine_shutdown` events. Does the stock go back to 4 on landing, on shutdown, or only when you leave the jet? Then go back to spectators and note what happens to the jet and the stock.
+4. **Tiyas.** Try to pick a Hornet there. Expect a refusal with the chat message "P2 TEST: slots at Tiyas are refused by the campaign." and `HOOKS slot_denied`. If you get in anyway, that's a result too: send the `slot_try` line, which tells us how to recognise a dynamic slot.
+5. **Marj Ruhayyil.** In a jet at Khalkhalah, pick F10 > Other > Campaign > **Marj Ruhayyil: add 2 Hornets**. Go back to the slot list: does Marj Ruhayyil now offer 2 Hornets? Pick one if it does.
+6. **Khalkhalah empty.** F10 > Campaign > **Khalkhalah: set Hornets to 0**. Does Khalkhalah disappear from the list or show 0? What happens to someone already in a jet there?
+7. **Join Me.** If it was listed in step 1, take it. Do you start in the air in #2's seat, next to the AI lead?
+
+### What to send back
+- `run9.log`.
+- For each step, what the slot screen showed and what happened; screenshots of the dynamic slot list help.
+- The server's `dcs.log` lines with `CAMPAIGN` or `[campaign]` if anything failed.
