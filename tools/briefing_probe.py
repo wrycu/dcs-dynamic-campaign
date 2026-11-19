@@ -83,6 +83,7 @@ class Probe:
     last_pos: dict[str, dict] = field(default_factory=dict)   # player name -> last unit position
     walkers: dict[str, dict] = field(default_factory=dict)    # walker key -> last report
     joined_by_walk: set[str] = field(default_factory=set)
+    slot_waiters: dict[int, asyncio.Future] = field(default_factory=dict)   # player id -> next slot
 
     # ---------- bridge callbacks ----------
 
@@ -122,6 +123,9 @@ class Probe:
             e = d.get("entry") or {}
             print(f"HOOKS   {kind} {d.get('name')} id {d.get('player_id')} side {d.get('side')} slot "
                   f"{d.get('slot')!r} {d.get('unit_type') or ''} {e.get('groupName') or ''}", flush=True)
+            waiter = self.slot_waiters.get(d.get("player_id"))
+            if kind == "player_slot" and d.get("slot") and waiter and not waiter.done():
+                waiter.set_result((d.get("side"), str(d["slot"])))
         elif kind in ("birth", "ejection", "landing_after_ejection", "player_enter_unit", "player_leave_unit",
                       "unit_removed", "pilot_dead", "takeoff", "land"):
             u = d.get("unit") or {}
@@ -216,11 +220,15 @@ class Probe:
         try:
             if cmd == "help":
                 await self.reply(pid, "-flights | -join N [cold|hot|air] | -spec | -draw N | -churn S|off | "
-                                      "-clear | -where | -near [R]")
+                                      "-clear | -where | -near [R] | -slot ID [side]")
             elif cmd == "flights":
                 await self.reply(pid, "\n".join(f"{f.n}: {f.callsign}, {f.mission} ({f.loadout})" for f in FLIGHTS))
             elif cmd == "join":
                 await self.join(pid, d.get("name"), rest)
+            elif cmd == "slot":
+                side = int(rest[1]) if len(rest) > 1 else BLUE_ID
+                r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": side, "slot": rest[0]})
+                await self.reply(pid, f"force_slot to side {side} slot {rest[0]}: {r}")
             elif cmd == "spec":
                 r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": 0, "slot": ""})
                 await self.reply(pid, f"force_slot to spectators: {r}")
@@ -263,7 +271,7 @@ class Probe:
 
     async def join(self, pid: int, name: str | None, rest: list[str]) -> None:
         if not rest:
-            await self.reply(pid, "usage: -join N [cold|hot|air] [cat=airplane] [fuel=0.6]")
+            await self.reply(pid, "usage: -join N [cold|hot|air] [nopush] [cat=airplane] [fuel=0.6]")
             return
         flight = next((f for f in FLIGHTS if f.n == int(rest[0])), None)
         if flight is None:
@@ -274,11 +282,28 @@ class Probe:
         spawn = self.spawn_data(pid, flight, mode, opts)
         print(f"JOIN    {name} (id {pid}) -> {flight.callsign} {mode}: {len(spawn['pylon_list'])} pylons, "
               f"fuel {spawn['numFuel']:.0f} kg, category {spawn['category']}", flush=True)
+        waiter = self.slot_waiters[pid] = asyncio.get_running_loop().create_future()
         t0 = time.monotonic()
         r = await self.call(self.hooks, "spawn_for", {"player_id": pid, "spawn": spawn})
         print(f"JOIN    create_client_aircraft returned {r} in {1000 * (time.monotonic() - t0):.0f} ms; "
               "watch for HOOKS player_slot and EVENT birth", flush=True)
         await self.reply(pid, f"{flight.callsign} ({mode}): server asked DCS to spawn you; DCS said {r.get('result')!r}")
+        # Run 14: DCS said the player occupied the new aircraft, but the client never moved into it.
+        # So, unless told not to, push the client into the slot DCS reports, as the server.
+        try:
+            side, slot = await asyncio.wait_for(waiter, 5)
+        except asyncio.TimeoutError:
+            await self.reply(pid, "no player_slot from DCS within 5 s; nothing to push")
+            return
+        finally:
+            self.slot_waiters.pop(pid, None)
+        if "nopush" in rest:
+            await self.reply(pid, f"DCS put you in slot {slot} (side {side}); not pushing (-slot {slot} to try)")
+            return
+        await asyncio.sleep(0.5)
+        r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": slot})
+        print(f"JOIN    force_slot {pid} -> side {BLUE_ID} slot {slot}: {r}", flush=True)
+        await self.reply(pid, f"pushed you into slot {slot}: {r}")
 
     async def near(self, pid: int, name: str | None, radius: float) -> None:
         center = self.last_pos.get(name) or next((w.get("pos") for w in self.walkers.values() if w.get("pos")), None)

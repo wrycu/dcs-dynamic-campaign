@@ -698,14 +698,17 @@ function commands.draw(d) draw_shape(d) end
 
 -- Many shapes in one command: { items = [draw data, ...] }. Returns how many, and how long DCS
 -- took (ms of real time), to measure what the F10 map can carry.
+-- The mission environment has no `os`; LuaSocket gives a wall clock.
+local function wall_clock() return (socket and socket.gettime and socket.gettime()) or (os and os.clock()) or 0 end
+
 function commands.draw_batch(d)
-  local t0 = os.clock()
+  local t0 = wall_clock()
   local n = 0
   for _, item in ipairs(d.items or {}) do
     draw_shape(item)
     n = n + 1
   end
-  return { drawn = n, ms = (os.clock() - t0) * 1000 }
+  return { drawn = n, ms = (wall_clock() - t0) * 1000 }
 end
 
 local SMOKE = { green = 0, red = 1, white = 2, orange = 3, blue = 4 }
