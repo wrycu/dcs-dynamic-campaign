@@ -91,8 +91,13 @@ Explore what can be shown in the sim. Options to try:
 - **OpenKneeboard** (a separate app many players already use, VR-friendly): it has web page
   tabs, so it might show the overview page from item 3 in the cockpit with no DCS changes at
   all. To find out.
-- **The F-4E Phantom's interactive kneeboard:** brainstorm what the campaign could do with it,
-  once we know what a mission or the engine can put on it.
+- **The F-4E's Virtual Browser** (RCtrl+V; `Mods/aircraft/F-4E/UI/VirtualBrowser`): a real web
+  browser in the cockpit, with a start page linking to live websites, so it could show the
+  engine's own overview page to F-4E crews with nothing installed. `tools/browser_probe.py`
+  serves a test page (JavaScript clock, live polling, a mock flight card) to check it. **Doesn't
+  open under Linux/Proton** (2026-11-19), which suggests DCS's built-in Chromium doesn't work
+  there at all; that also counts against the Hooks-script option above (P14) for Linux players.
+  Still worth trying from Windows: can you type an address, does the page run scripts?
 - **Live kneeboard pages** (item 39): existing pages update when their files are rewritten.
 - To find out: how many drawings DCS handles before the F10 map gets slow, and whether drawings
   can be shown to one group or player instead of a whole coalition.
