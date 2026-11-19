@@ -640,3 +640,28 @@ The probe writes "P5 PAGE A, version 1" into `Kneeboard/FA-18C_hornet` when it s
 - **Pages built into the mission** show: the all-aircraft page (`KNEEBOARD/IMAGES`) and the FA-18C page (`KNEEBOARD/FA-18C_hornet/IMAGES`).
 - **A page in the Kneeboard folder that's already on the kneeboard updates live** when its file is rewritten (page A, version 2, without leaving the jet).
 - **A new page in the folder appears only on the next spawn** (page B needed leaving the slot and taking it again); no mission restart needed.
+
+## Run 13: theater data (`tools.theater_probe`), proof P6
+Single player. Question: can the map layer (airbases, towns, roads, bridges) be extracted from DCS well enough to build objectives and the links between them? It's a one-off extraction per map, not play, so stutters while it runs are fine.
+
+The probe lists every airbase (runways, parking), converts the 1,182 places in `Mods/terrains/Syria/map/towns.lua` to map coordinates with DCS's own projection, ranks the places within 60 nm of Khalkhalah by size (scenery objects within 1 km), searches for bridges within 30 nm (scenery whose type name contains "bridge" or "most"), picks objectives (airdromes and the 40 largest places), links each to its 3 nearest, and asks DCS for each link's road route. It writes `build/theater/syria-probe.json` and a map image, `build/theater/syria-probe.png`.
+
+**Steps**
+1. `python3 -m tools.theater_probe 2>&1 | tee run13.log`
+2. Start `campaign-dev/campaign-smoke.miz`, take the jet and keep DCS focused until `WROTE ...` (a few minutes).
+3. Look at `build/theater/syria-probe.png`: are the objective towns sensible (real towns and bases rather than reservoirs and racetracks), do the links follow roads you'd expect, and are bridges where rivers and roads cross?
+
+### What to send back
+- `run13.log` (the image and JSON are in `build/`, I can read them).
+
+### Results (2026-11-19): passed, with clean-up rules for the build
+Everything came out of DCS in about 2 minutes:
+- **Airbases:** 225 on the map, all reported as category 0 (airdrome), in 117 ms. 132 of them are helipads with names like `HS27`, `HL07`, `H_med_orig_01` (no runways, 1 to 3 parking spots). So helipads have to be told apart by having no runways, not by category. Khalkhalah: 2 runways (15/33, 2514 m), 59 parking spots.
+- **Towns:** all 1,182 places converted in 578 ms; 118 within 60 nm. The size search took 11.8 s.
+- **Bridges:** 165 within 30 nm in 7.5 s: 89 two-lane road, 49 four-lane road, 19 wooden, 8 rail. They sit where you'd expect: the Yarmouk valley in the south, and the wadis west of Khalkhalah.
+- **Roads:** 199 of 210 links have a road route. That took 76 s in all (median 113 ms per route, longest 922 ms), so routes are computed once when the map layer is built and saved. Most links follow the road the straight line suggests; 30 are more than twice as long by road. The 11 without a route all touch helipads off the road network (in Lebanon, Israel, Jordan, and `HS27`).
+
+Things the map layer build has to handle:
+1. **Places aren't towns.** `towns.lua` lists landmarks next to towns: Umayyad Mosque, Ministry of Expatriates, Four Seasons Hotel, Damascus Tower and Central Bank of Syria all sit in central Damascus. Each counts as its own place, so Damascus filled 10 of the 40 objective spots. Places within about 2 km of each other need merging into one town, named after its largest member or a known town name.
+2. **Size counts clutter.** The object counts include trash cans, market stalls and walls (`TRASHCAN_EU_SMALL` 11,892, `STREET_MARKET_2` 4,950). Counting only buildings (`*HOUSE*`, `*BUILDING*`) would rank towns better.
+3. **Helipads are not airbases.** They're FARP or landing site candidates at best, and most links that went the long way round or found no road start at one.

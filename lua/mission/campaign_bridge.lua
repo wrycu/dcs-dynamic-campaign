@@ -786,6 +786,63 @@ function commands.query(d)
         wind_ground = wind.atGround, wind_2000 = wind.at2000, wind_8000 = wind.at8000,
       },
     }
+  elseif d.what == "airbases" then
+    -- Every airbase on the map (airdromes, helipads/FARPs, ships), with runways and parking.
+    local out = {}
+    for _, ab in ipairs(world.getAirbases() or {}) do
+      local e = {}
+      pcall(function()
+        local p = ab:getPoint()
+        e.name, e.id, e.pos, e.alt = ab:getName(), tonumber(ab:getID()), pos2(p), p.y
+        e.category, e.coalition = ab:getDesc().category, ab:getCoalition()
+        e.type = ab:getTypeName()
+        local rws = {}
+        for _, r in ipairs(ab:getRunways() or {}) do
+          rws[#rws + 1] = { name = r.Name, course = r.course, length = r.length, width = r.width,
+                            pos = r.position and pos2(r.position) or nil }
+        end
+        e.runways = rws
+        e.parking = #(ab:getParking() or {})
+      end)
+      out[#out + 1] = e
+    end
+    return { airbases = out }
+  elseif d.what == "ll_to_xy" then
+    -- Latitude/longitude (degrees) to map x/y, with DCS's own projection.
+    local out = {}
+    for i, q in ipairs(d.points or {}) do
+      local v = coord.LLtoLO(q.lat, q.lon, 0)
+      out[i] = { x = v.x, y = v.z }
+    end
+    return { points = out }
+  elseif d.what == "scenery" then
+    -- Scenery objects within radius (m) of center: count per type name, and the positions of
+    -- those whose type name contains any of d.match (case-insensitive), up to d.limit.
+    local counts, found, total = {}, {}, 0
+    local limit = d.limit or 500
+    local match = {}
+    for _, m in ipairs(d.match or {}) do match[#match + 1] = string.lower(m) end
+    local vol = { id = world.VolumeType.SPHERE,
+                  params = { point = { x = d.center.x, y = land.getHeight({ x = d.center.x, y = d.center.y }),
+                                       z = d.center.y }, radius = d.radius } }
+    world.searchObjects(Object.Category.SCENERY, vol, function(o)
+      local ok, t = pcall(o.getTypeName, o)
+      t = ok and t or "?"
+      total = total + 1
+      counts[t] = (counts[t] or 0) + 1
+      if #found < limit and #match > 0 then
+        local lt = string.lower(t)
+        for _, m in ipairs(match) do
+          if string.find(lt, m, 1, true) then
+            local pok, p = pcall(o.getPoint, o)
+            found[#found + 1] = { type = t, pos = pok and pos2(p) or nil }
+            break
+          end
+        end
+      end
+      return true
+    end)
+    return { total = total, counts = counts, found = found }
   elseif d.what == "road_point" then
     -- Nearest point on the road network ("roads" or "railroads") to d.pos.
     local x, y = land.getClosestPointOnRoads(d.road or "roads", d.pos.x, d.pos.y)
