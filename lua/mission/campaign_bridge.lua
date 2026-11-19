@@ -771,6 +771,17 @@ function commands.query(d)
     local counts = {}
     for _, t in ipairs(d.types or {}) do counts[t] = wh:getItemCount(t) end
     return { counts = counts }
+  elseif d.what == "road_point" then
+    -- Nearest point on the road network ("roads" or "railroads") to d.pos.
+    local x, y = land.getClosestPointOnRoads(d.road or "roads", d.pos.x, d.pos.y)
+    if not x then return { found = false } end
+    return { found = true, pos = { x = x, y = y } }
+  elseif d.what == "road_path" then
+    -- DCS's own road route from d.from to d.to, as a polyline of {x, y}; empty if there is none.
+    local pts = land.findPathOnRoads(d.road or "roads", d.from.x, d.from.y, d.to.x, d.to.y) or {}
+    local out = {}
+    for i, q in ipairs(pts) do out[i] = { x = q.x, y = q.y } end
+    return { points = out }
   elseif d.what == "heights" then
     -- Terrain elevation (m) for each {x, y} in d.points, in order; e.g. for waypoint elevations.
     local out = {}

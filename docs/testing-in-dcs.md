@@ -541,3 +541,46 @@ Note what the slot screen shows at each step; screenshots help.
 - `run9.log`.
 - For each step, what the slot screen showed and what happened; screenshots of the dynamic slot list help.
 - The server's `dcs.log` lines with `CAMPAIGN` or `[campaign]` if anything failed.
+
+### Results (2026-11-19, FA-18C, Linux dedicated server)
+- **Slot list:** dynamic slots have their own tab listing every blue base with dynamic spawn, including one with no stock (Marj Ruhayyil). An empty base offers no aircraft.
+- **Stock controls what can be picked, live:** after the F10 menu gave Marj Ruhayyil 2 Hornets mid-mission, the slot list offered them and the spawn worked.
+- **Spawning** at Khalkhalah: loadout, fuel and livery are chosen in the dialog; the jet spawned in a shelter; stock went 4 → 3.
+- **Leaving the jet** (to spectators, on the ground) removes it and puts the stock back (3 → 4) at once.
+- **What the engine sees:** `birth` with the player's name, the type, `place` (the base) and a group named `<base>_<type display name>_<n>` (e.g. `Khalkhalah_F/A-18C Lot 20_3`, unit `..._3-1`). The Hooks get `player_slot` with a runtime unit id as `slot` (e.g. `1000004`) that isn't in `getAvailableSlots`.
+- **Refusing is not possible up front:** DCS does **not** call `onPlayerTryChangeSlot` for dynamic slots (no `slot_try`), so the Tiyas refusal never ran. Control has to come from the stock (0 = nothing to pick), or after the fact (e.g. `net.force_player_slot` back to spectators).
+- **No Client slots at runtime:** `coalition.addGroup` rejects a group with a `Client` unit (Join Me), so joining a flight in the air needs slots written into the .miz.
+- Not checked yet: when stock comes back after a flight (landing, shutdown, or leaving the jet), and what happens to a player in a jet when their base's stock is set to 0.
+
+## Run 10: ground movement at scale (`campaign-smoke.miz` + `tools.convoy_probe`), proof P3
+Single player on your PC. Questions: can the engine get road routes from DCS, do convoys drive them, can a convoy be taken out of DCS mid-route and put back without losing its way, and does it stay smooth with many convoys moving?
+
+The probe picks road start and end points 8–20 nm apart within 30 nm of Khalkhalah, asks DCS for the road route (`land.findPathOnRoads`), and spawns red convoys (BTR-80, BMP-2, T-72B and Ural trucks) in a column on the road, ordered to drive to the end "On Road" at 50 km/h. Every 4 minutes half of them are despawned and respawned 5 s later where they were. Convoys that arrive turn around. A `SUMMARY` line prints every 30 s.
+
+**Steps**
+1. **Default load (24 convoys of 8 = 192 vehicles).** `python3 -m tools.convoy_probe 2>&1 | tee run10a.log`, then start `campaign-dev/campaign-smoke.miz` and take the FA-18C (put it on autopilot or pause-free orbit; the jet doesn't matter).
+   - Expect 24 `ROUTE` lines with the time DCS took to answer, then `ROUTES ... median N ms`.
+   - Look at a few convoys: F10 map, then F7/F10 views on the trucks. Are they in a column on the road, driving towards their `Cnn end` label? Do any stop, turn back, or leave the road?
+   - Note your frame rate (Ctrl+Pause shows it) before the convoys spawn and once they're all moving.
+   - Let it run 15 game minutes (the `SUMMARY` lines count them): 3 respawn cycles. Keep DCS focused: single player pauses when it loses focus. Each `RESPAWN` should be followed by `RESUMED ... moving again N s after respawn`.
+2. **Heavier load.** Stop the probe (Ctrl+C), restart the mission, and run `python3 -m tools.convoy_probe --groups 60 --vehicles 10 2>&1 | tee run10b.log` (600 vehicles). Frame rate and `sim speed` again, for 10 minutes.
+
+**What the summary means**
+- `off route`: how far each lead vehicle is from the route DCS gave the engine. Tens of metres = same roads. Kilometres = DCS chose a different way, so the engine can't predict where a convoy is from `findPathOnRoads`.
+- `sim speed`: model time against wall time. Below about 0.95x, DCS is struggling.
+- `bridge`: how long a simple query takes; large numbers mean the mission scripting is busy.
+- `avg km/h` in `ARRIVED` lines: the real speed of a convoy on a 50 km/h order, for the engine's movement model.
+
+### What to send back
+- `run10a.log` and `run10b.log`.
+- Frame rates: before, 24 convoys, 60 convoys.
+- What you saw: columns on roads, anything stuck, turning around, or driving cross-country; and whether respawned convoys looked the same as before.
+
+### Results (2026-11-18, single player, FA-18C)
+- **Road routes:** `land.findPathOnRoads` returns a detailed polyline (150–1,700 points; 50–350 corners after thinning to 5 m), 10–200% longer than the straight line.
+- **Convoys drive that route:** lead vehicles stayed within 15 m of it the whole time, and arrived 1–3 m from the end. The engine can predict where a convoy is from the saved route.
+- **Speed:** 41–46 km/h end to end on a 50 km/h order (8-vehicle convoys).
+- **Respawn mid-route:** moving again 1–2 s after being put back, in a column on the road.
+- **Route queries stall the sim:** about 100 ms each (mostly the bridge's poll interval), some 0.7–1.0 s, felt as stutter. Routes must be computed outside play.
+- **Scale:** 24 convoys of 8 (192 vehicles) moving: smooth, no frozen frames, sim speed 1.00x. 60 convoys of 10 (600 vehicles): a burst of 2–3 frozen frames (~0.4 s) every ~4 s, with the bridge stopped too, so it's DCS's cost for that many moving vehicles; frame rate ~240 → ~130. Ordering the route as point-to-point waypoints (`--orders points`) instead of "On Road" didn't remove it.
+- 5 of the 60 convoys failed to spawn; cause not checked yet.
