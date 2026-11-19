@@ -11,7 +11,7 @@ What it does:
     `slot_rules` command. Default (PvE): spectators and blue only.
   * Loads another mission when the engine asks (`load_mission`), and reports each stage of a
     mission load (`mission_load`).
-  * Chat commands: chat starting with "!" goes to the engine (`chat_command`) instead of the
+  * Chat commands: chat starting with "-" goes to the engine (`chat_command`) instead of the
     other players; the engine answers with `chat_to`.
   * Puts players into aircraft (`spawn_for`, `force_slot`) and reports the server's frame times
     (`frame_stats`), for proof P19.
@@ -41,7 +41,7 @@ local defaults = {
   max_bytes = 256 * 1024,
   allowed_sides = { 0, 2 },  -- spectators, blue (PvE: red is AI-only)
   side_denied_reason = "That side is AI-only in this campaign.",
-  chat_prefix = "!",         -- chat starting with this is a command for the engine
+  chat_prefix = "-",         -- chat starting with this is a command for the engine
   frame_stats_interval = 10, -- seconds of real time between frame_stats events (0: off)
 }
 
@@ -461,6 +461,7 @@ end
 -- Chat starting with cfg.chat_prefix is a command for the engine; the other players don't see
 -- it. Returning "" drops the message.
 callbacks.onPlayerTrySendChat = safe("onPlayerTrySendChat", function(id, msg, all)
+  log_info("onPlayerTrySendChat id=" .. tostring(id) .. " all=" .. tostring(all) .. " msg=" .. tostring(msg))
   if not is_tracked_player(id) or type(msg) ~= "string" then return nil end
   if msg:sub(1, #cfg.chat_prefix) ~= cfg.chat_prefix then return nil end
   local info = net.get_player_info(id) or {}

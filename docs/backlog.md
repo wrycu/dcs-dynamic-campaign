@@ -431,8 +431,8 @@ What DCS offers (checked in the 2.9 install, 2026-11-19):
 - **No-mod route:**
   - **Spectators** can open the F10 map. In PvE every player is blue, so the campaign's
     drawings can go to everyone.
-  - **Chat** reaches the server Hooks (`onPlayerTrySendChat`) from spectators, so `!flights` and
-    `!join 2` could work with nothing installed. The server answers with `net.send_chat_to`.
+  - **Chat** reaches the server Hooks (`onPlayerTrySendChat`) from spectators, so `-flights` and
+    `-join 2` could work with nothing installed. The server answers with `net.send_chat_to`.
   - **Server-side join:** the slot dialog spawns a dynamic-slot aircraft with
     `DCS.create_client_aircraft(spawn)`. The spawn data has the type, base, fuel, pylons, livery,
     hot or cold, and an `isInAir` flag the dialog always sets to false. If the server can call it

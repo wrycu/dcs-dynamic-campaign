@@ -3,20 +3,20 @@ with campaign-slots.miz (dynamic slots at Khalkhalah), and join it from your own
 
     python3 -m tools.briefing_probe
 
-Everything is driven by chat commands (type them in the chat window, starting with "!"; the
+Everything is driven by chat commands (type them in the chat window, starting with "-"; the
 other players don't see them):
 
-    !help                  this list
-    !flights               the flights on offer (each has a parked Hornet at Khalkhalah)
-    !join N [cold|hot|air] [cat=airplane] [fuel=0.6]
+    -help                  this list
+    -flights               the flights on offer (each has a parked Hornet at Khalkhalah)
+    -join N [cold|hot|air] [cat=airplane] [fuel=0.6]
                            ask the server to spawn you into flight N's jet with its loadout
                            (DCS.create_client_aircraft for you, as the slot screen does)
-    !spec                  send yourself back to spectators (net.force_player_slot)
-    !draw N                draw N extra shapes on the F10 map (everyone sees them)
-    !churn S | off         redraw all the extra shapes every S seconds
-    !clear                 remove the extra shapes
-    !where                 what the server knows about your position, and pilots on foot
-    !near [R]              objects within R m (default 300) of where you last were
+    -spec                  send yourself back to spectators (net.force_player_slot)
+    -draw N                draw N extra shapes on the F10 map (everyone sees them)
+    -churn S | off         redraw all the extra shapes every S seconds
+    -clear                 remove the extra shapes
+    -where                 what the server knows about your position, and pilots on foot
+    -near [R]              objects within R m (default 300) of where you last were
 
 What it finds out:
 1. What a spectator sees on F10: the probe draws a few shapes for everyone and a few for blue
@@ -50,7 +50,7 @@ HORNET = "FA-18C_hornet"
 HORNET_FUEL_KG = 4900
 NM = 1852.0
 REACH_M = 15.0
-EXTRA_BASE_ID = 900_000  # engine shape ids for !draw
+EXTRA_BASE_ID = 900_000  # engine shape ids for -draw
 FIXED_IDS = list(range(800_000, 800_020))
 BLUE_ID = 2
 
@@ -112,7 +112,7 @@ class Probe:
         kind = d.get("kind")
         if kind == "chat_command":
             print(f"CHAT    {d.get('name')} (id {d.get('player_id')}, side {d.get('side')}, slot {d.get('slot')!r}): "
-                  f"!{d.get('text')}", flush=True)
+                  f"-{d.get('text')}", flush=True)
             asyncio.create_task(self.command(d))
         elif kind == "frame_stats":
             print(f"FRAME   server avg {d['avg_ms']:.1f} ms, max {d['max_ms']:.0f} ms, {d['over_50ms']} frames over "
@@ -192,7 +192,7 @@ class Probe:
                                                               {"x": x + 4 * NM, "y": y + 10 * NM}],
                                                    "color": [1, 0, 0, 1], "fill": [1, 0, 0, 0.15]})
             await self.call(self.mission, "message", {"audience": "all", "duration": 30, "text":
-                            "P19 briefing room probe. Type !help in chat (it won't show to others)."})
+                            "P19 briefing room probe. Type -help in chat (it won't show to others)."})
             print("SETUP   done: 3 flights parked, labels drawn (ALL and BLUE-only near Khalkhalah)", flush=True)
         except (BridgeError, asyncio.TimeoutError, KeyError) as e:
             print(f"SETUP   failed: {e}", flush=True)
@@ -215,8 +215,8 @@ class Probe:
         cmd, rest = words[0].lower(), words[1:]
         try:
             if cmd == "help":
-                await self.reply(pid, "!flights | !join N [cold|hot|air] | !spec | !draw N | !churn S|off | "
-                                      "!clear | !where | !near [R]")
+                await self.reply(pid, "-flights | -join N [cold|hot|air] | -spec | -draw N | -churn S|off | "
+                                      "-clear | -where | -near [R]")
             elif cmd == "flights":
                 await self.reply(pid, "\n".join(f"{f.n}: {f.callsign}, {f.mission} ({f.loadout})" for f in FLIGHTS))
             elif cmd == "join":
@@ -241,9 +241,9 @@ class Probe:
             elif cmd == "near":
                 await self.near(pid, d.get("name"), float(rest[0]) if rest else 300.0)
             else:
-                await self.reply(pid, f"unknown command !{cmd}; try !help")
+                await self.reply(pid, f"unknown command -{cmd}; try -help")
         except (BridgeError, asyncio.TimeoutError, ValueError, IndexError) as e:
-            await self.reply(pid, f"!{cmd} failed: {e}")
+            await self.reply(pid, f"-{cmd} failed: {e}")
 
     def spawn_data(self, pid: int, flight: Flight, mode: str, opts: dict[str, str]) -> dict:
         payload = dcs_payload(HORNET, flight.loadout)
@@ -263,11 +263,11 @@ class Probe:
 
     async def join(self, pid: int, name: str | None, rest: list[str]) -> None:
         if not rest:
-            await self.reply(pid, "usage: !join N [cold|hot|air] [cat=airplane] [fuel=0.6]")
+            await self.reply(pid, "usage: -join N [cold|hot|air] [cat=airplane] [fuel=0.6]")
             return
         flight = next((f for f in FLIGHTS if f.n == int(rest[0])), None)
         if flight is None:
-            await self.reply(pid, f"no flight {rest[0]}; try !flights")
+            await self.reply(pid, f"no flight {rest[0]}; try -flights")
             return
         mode = next((w for w in rest[1:] if w in ("cold", "hot", "air")), "cold")
         opts = dict(w.split("=", 1) for w in rest[1:] if "=" in w)

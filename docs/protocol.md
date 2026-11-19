@@ -126,7 +126,7 @@ Each message's `data.kind` is one of:
 | `slot_try` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry`: every slot attempt, before the rules. `entry` is DCS's slot listing (`unitId`, `type`, `groupName`, `airdromeId`, ...) or null |
 | `player_slot` | `player_id`, `ucid`, `name`, `side`, `slot`, `unit_type`, `entry` |
 | `slot_denied` | `player_id`, `ucid`, `name`, `side`, `slot`, `reason` |
-| `chat_command` | `player_id`, `ucid`, `name`, `side`, `slot`, `text`: chat starting with `!` (the `!` removed). The other players don't see it. |
+| `chat_command` | `player_id`, `ucid`, `name`, `side`, `slot`, `text`: chat starting with `-` (the `-` removed). The other players don't see it. |
 | `frame_stats` | `frames`, `avg_ms`, `max_ms`, `over_50ms`, `seconds`: the server's frame times, every 10 s of real time |
 | `mission_load` | `stage` (`requested`, `begin`, `end`, `start`, `stop`), `file` or `path`, `ok`/`error` (for `requested`), `real_time` |
 
