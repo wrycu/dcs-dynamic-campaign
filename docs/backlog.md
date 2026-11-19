@@ -423,6 +423,9 @@ What DCS offers (checked in the 2.9 install, 2026-11-19):
     a "ready room" jet at the briefing area, climb out, and walk to the jet of the flight they want.
     Unknowns: does the server see the walking pilot's position (other players reportedly don't see
     it move), and does a player who walked up to a parked jet get moved into it?
+    **Run 14d:** in a parked Hornet, LCtrl+E ×3 fires the ejection seat; after the parachute
+    landing the player walks in first person, and the server sees the pilot's position every few
+    seconds (`WALKER` lines). Getting into a jet by walking up to it is still to prove.
   - **A unit the engine moves.** A soldier or vehicle stands in for the player, moved by the engine
     from F10 menu or chat commands ("walk to Hornet 2"), watched from outside. Janky, but needs
     nothing.

@@ -485,9 +485,16 @@ callbacks.onPlayerTrySendChat = safe("onPlayerTrySendChat", function(id, msg, al
   -- The server's own chat (the engine's replies) comes through here too; never treat it as a command.
   if id == net.get_my_player_id() then return nil end
   if msg:sub(1, #cfg.chat_prefix) ~= cfg.chat_prefix then return nil end
+  -- Live only, never queued or replayed: a command typed while the engine was away must not run
+  -- later (Run 14d: replayed -join commands ran after the player had left).
+  if transport.state ~= "ready" then
+    net.send_chat_to("> the campaign engine is not connected; try again later", id)
+    return ""
+  end
   local info = net.get_player_info(id) or {}
-  emit("chat_command", { player_id = id, ucid = info.ucid or H.ucids[id], name = info.name, side = info.side,
-                         slot = info.slot, text = msg:sub(#cfg.chat_prefix + 1) })
+  transport.send_volatile("player", { kind = "chat_command", player_id = id, ucid = info.ucid or H.ucids[id],
+                                      name = info.name, side = info.side, slot = info.slot,
+                                      text = msg:sub(#cfg.chat_prefix + 1) })
   return ""
 end)
 

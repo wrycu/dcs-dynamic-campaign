@@ -706,3 +706,15 @@ The probe parks three Hornets at Khalkhalah, one per mock flight (Colt 1, Uzi 2,
 
 ### What to send back
 - `run14.log`, and what you saw at each step.
+
+### Results (2026-11-19, runs 14 to 14d)
+- **Hooks only load when DCS starts.** The first tries ran Hooks from 2026-11-18 and chat commands didn't work; a full server restart fixed it. Reloading a mission isn't enough.
+- **F10 for spectators:** the drawings for everyone and the parked Hornets show to spectators. The blue-only label shows only once you've picked blue.
+- **Chat commands work** from spectators: `onPlayerTrySendChat` gets every `-` line and the server answers with `chat_to`. Whether other players see the lines is unchecked (needs a second player). The server's own chat comes through the same hook; replies start with `> ` and the probe ignores player id 1, which stopped a feedback loop. Chat commands are now live only: an engine reconnect replayed old `-join` commands (Run 14d), so they're no longer queued.
+- **`net.force_player_slot` into a mission slot works** for blue spectators (side 2), as often as you like. It doesn't work from neutral (side 0). `-spec` now keeps you blue.
+- **The server can't put a player in a dynamic slot.** `DCS.create_client_aircraft` on the server creates and assigns the slot (with warehouse stock; the mission ships with none), but the client never enters, not even with Briefing → Fly. Even the opt-in client script, which asks DCS on the player's PC as the slot screen does, gets `spawnLocalPlayer` logged and nothing more.
+- **Joining a mission Client slot works, with one command, using the client script** (`lua/client/campaign_client.lua`, Run 14d): `-slot 3` moved you into the `Ramp` Client Hornet parked cold at Khalkhalah, and `-enter` (the client script's `net.spawn_player()`) put you in the cockpit: `EVENT birth ... Ramp-1 place=Khalkhalah`. The same worked for the airborne Aerial-1 slot. Without the client script, the player clicks Fly after the move. The client script can't load DCS's slot-screen modules (Hooks run apart from the UI), so it doesn't try.
+- **F10 load:** 2,600 shapes redrawn every 10 s cost the server nothing visible (11 to 12 ms frames). On the client: outside F10 it holds its 239 fps cap with a one-frame dip about every 30 s; with F10 open it drops to about 185 fps with dips. Fine when only changed shapes are redrawn, and not often.
+- **Walking works, and the server can follow it.** In the parked Hornet, LCtrl+E ×3 fires the ejection seat (`EVENT ejection`, then `landing_after_ejection` for a `pilot_f15_parachute`); on the ground the player walks in first person and the probe gets the pilot's position every few seconds (`WALKER` lines, about 1.5 m/s). Walking up to a jet did nothing yet: see below.
+
+**Design that follows:** the engine builds a Client slot into the mission for each player flight. A blue spectator is moved into it with `force_player_slot`; with the client script they're in the jet straight away, without it they click Fly. Dynamic slots aren't used for joining.

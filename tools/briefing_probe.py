@@ -27,7 +27,7 @@ What it finds out:
 4. What the F10 map can carry: server frame times (FRAME lines every 10 s) while you add and
    churn shapes; watch your own frame rate too.
 5. Walking: climb out of a parked jet (LCtrl+E three times) and walk. Does the server see you
-   (WALKER lines)? Walk up to a flight's parked Hornet: within 15 m the probe tries to put you
+   (WALKER lines)? Walk up to any parked Hornet: within 15 m the probe tries to put you
    in that flight.
 """
 from __future__ import annotations
@@ -66,6 +66,11 @@ class Flight:
 
 
 SERVER_PLAYER_ID = 1   # a dedicated server is always player 1
+# Walking (part 4): a pilot on foot who comes within REACH_M of any parked Hornet is moved into this
+# mission Client slot (the "Ramp" Hornet from build_test_missions, unit id 3) and, with the client
+# script, spawned into it. Run 14d: a mission slot is the join that works; dynamic slots don't.
+WALK_SLOT = "3"
+EJECTION_MATCH_M = 3000.0   # a walker is the player who ejected within this distance
 
 FLIGHTS = [
     Flight(1, "Colt 1", "CAS south of Damascus", "AIM-9M*2, AIM-7M*2, FUEL*2"),
@@ -87,6 +92,8 @@ class Probe:
     joined_by_walk: set[str] = field(default_factory=set)
     slot_waiters: dict[int, asyncio.Future] = field(default_factory=dict)   # player id -> next slot
     client_scripts: set[int] = field(default_factory=set)   # player ids that said client_hello
+    ejections: list[tuple[str, dict, float]] = field(default_factory=list)   # (player, pilot pos, when)
+    walker_owner: dict[str, str] = field(default_factory=dict)   # walker key -> player name
 
     # ---------- bridge callbacks ----------
 
@@ -139,6 +146,8 @@ class Probe:
                       "unit_removed", "pilot_dead", "takeoff", "land"):
             u = d.get("unit") or {}
             extra = f" pilot={d['pilot']}" if d.get("pilot") else ""
+            if kind == "ejection" and u.get("player") and (d.get("pilot") or {}).get("pos"):
+                self.ejections.append((u["player"], d["pilot"]["pos"], time.monotonic()))
             print(f"EVENT   {kind} {u.get('player') or ''} {u.get('type') or ''} {u.get('name') or ''} "
                   f"cat={u.get('category')} place={d.get('place')}{extra}", flush=True)
 
@@ -155,9 +164,9 @@ class Probe:
                 w.get("pos") and prev.get("pos") and math.dist((w["pos"]["x"], w["pos"]["y"]),
                                                                (prev["pos"]["x"], prev["pos"]["y"])) > 3)
             if moved:
-                frm = w.get("from") or {}
+                owner = self.owner_of(w)
                 print(f"WALKER  {key} exists={w.get('exists')} {w.get('type') or ''} cat={w.get('category')} "
-                      f"pos={_fmt(w.get('pos'))} from {frm.get('player') or frm.get('name') or '?'}", flush=True)
+                      f"pos={_fmt(w.get('pos'))} player {owner or '?'}", flush=True)
                 self.walkers[key] = w
                 if w.get("exists") and w.get("pos"):
                     asyncio.create_task(self.check_reach(w))
@@ -348,27 +357,62 @@ class Probe:
         kinds = sorted({f"{o.get('category')}:{o.get('type')}" for o in found})
         await self.reply(pid, f"{len(found)} objects within {radius:.0f} m: {', '.join(kinds)[:300]}")
 
+    def owner_of(self, w: dict) -> str | None:
+        """Which player a pilot on foot is. The bridge links the parachuting pilot to the jet, but the
+        pilot after landing is a new object; take the player who ejected nearest to it."""
+        key = w.get("key")
+        if key in self.walker_owner:
+            return self.walker_owner[key]
+        name = (w.get("from") or {}).get("player")
+        if not name and w.get("pos"):
+            pos = w["pos"]
+            near = [(math.dist((pos["x"], pos["y"]), (p["x"], p["y"])), n) for n, p, _ in self.ejections]
+            near = [c for c in near if c[0] <= EJECTION_MATCH_M]
+            name = min(near)[1] if near else None
+        if name:
+            self.walker_owner[key] = name
+        return name
+
     async def check_reach(self, w: dict) -> None:
-        pos = w["pos"]
-        for f in FLIGHTS:
-            if not f.pos or math.dist((pos["x"], pos["y"]), (f.pos["x"], f.pos["y"])) > REACH_M:
-                continue
-            key = f"{w['key']}:{f.n}"
-            if key in self.joined_by_walk:
-                return
-            self.joined_by_walk.add(key)
-            frm = w.get("from") or {}
-            name = frm.get("player")
-            print(f"REACH   pilot on foot {w['key']} ({name or 'unknown player'}) reached {f.callsign}'s jet", flush=True)
-            players = await self.call(self.hooks, "players", {})
-            pid = next((p["id"] for p in players if name and p.get("name") == name), None)
-            if pid is None:
-                print("REACH   can't tell which player this is; not joining", flush=True)
-                return
-            await self.reply(pid, f"You walked up to {f.callsign}'s jet. Strapping you in...")
-            r = await self.call(self.hooks, "spawn_for", {"player_id": pid, "spawn": self.spawn_data(pid, f, "cold", {})})
-            print(f"REACH   create_client_aircraft for {name} returned {r}", flush=True)
+        """Part 4: a pilot on foot within REACH_M of any parked Hornet (a flight's static, or any other)
+        is moved into WALK_SLOT and, with the client script, spawned."""
+        if w["key"] in self.joined_by_walk or self.mission is None:
             return
+        self.joined_by_walk.add(w["key"])   # one check at a time per walker; dropped again below if no jet
+        pos = w["pos"]
+        try:
+            r = await self.call(self.mission, "query", {"what": "objects", "center": pos, "radius": REACH_M, "limit": 10})
+        except BridgeError:
+            r = {}
+        jets = [o for o in (r.get("found") or []) if o.get("type") == HORNET]
+        if not jets:
+            self.joined_by_walk.discard(w["key"])
+            return
+        jet = jets[0]
+        name = self.owner_of(w)
+        label = next((f.callsign for f in FLIGHTS if f.static and f.static == jet.get("name")), None) or jet.get("name")
+        print(f"REACH   pilot on foot {w['key']} ({name or 'unknown player'}) reached Hornet {label} "
+              f"({jet.get('category')}) at {_fmt(jet.get('pos'))}", flush=True)
+        players = await self.call(self.hooks, "players", {})
+        pid = next((p["id"] for p in players if name and p.get("name") == name), None)
+        if pid is None:
+            print("REACH   can't tell which player this is; not joining", flush=True)
+            self.joined_by_walk.discard(w["key"])
+            return
+        await self.reply(pid, f"You walked up to Hornet {label}. Strapping you in (slot {WALK_SLOT})...")
+        # A pilot who ejected from WALK_SLOT is still in it, and force_slot into your own slot does
+        # nothing (Run 14), so go through blue spectators first.
+        r0 = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": ""})
+        print(f"REACH   force_slot {name} -> blue spectators: {r0}", flush=True)
+        await asyncio.sleep(1)
+        r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": WALK_SLOT})
+        print(f"REACH   force_slot {name} -> slot {WALK_SLOT}: {r}", flush=True)
+        if pid in self.client_scripts:
+            await asyncio.sleep(1)
+            await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignEnter", "args": []})
+            print(f"REACH   asked {name}'s client script to enter", flush=True)
+        else:
+            await self.reply(pid, "No client script: click Fly to get in.")
 
     # ---------- F10 capacity ----------
 
