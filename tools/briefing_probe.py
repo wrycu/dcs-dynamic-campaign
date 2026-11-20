@@ -35,8 +35,13 @@ What it finds out:
 7. Windows (needs the client script, version 2):
      -window       a campaign window (dxgui) listing the flights; its "Ramp" button puts you in
                    the Ramp jet. Ctrl+Shift+F9 shows or hides it.
-     -web [URL]    a web page inside DCS (DCS's own Chromium widget): the probe's test page, or URL.
+     -web [mount|data|stock|URL]
+                   a web page inside DCS (DCS's own Chromium widget): the probe's test page from a
+                   mounted folder (default) or as a data: URL, DCS's own Start Here page (the
+                   control), or any URL.
    With --web-port N the probe also serves the test page over HTTP (try -web http://SERVER:N/).
+   Never 8088: that's the dedicated server's own web GUI port, and DCS restarts in a loop if
+   something else answers it (Run 14j).
    CLICK lines are buttons pressed; WEB lines say how the window and page got on.
 """
 from __future__ import annotations
@@ -75,6 +80,9 @@ class Flight:
 
 
 SERVER_PLAYER_ID = 1   # a dedicated server is always player 1
+# Ports DCS itself uses on the server; --web-port must not take them. Run 14j: the probe on 8088
+# answered the dedicated server's own web GUI requests, and DCS shut down and restarted in a loop.
+DCS_PORTS = {8088: "the dedicated server web GUI", 10308: "multiplayer", 7341: "the campaign bridge"}
 # Walking (part 4): a pilot on foot who comes within REACH_M of any parked Hornet is moved into this
 # mission Client slot (the "Ramp" Hornet from build_test_missions, unit id 3) and, with the client
 # script, spawned into it. Run 14d: a mission slot is the join that works; dynamic slots don't.
@@ -270,7 +278,7 @@ class Probe:
         try:
             if cmd == "help":
                 await self.reply(pid, "-flights | -join N [cold|hot|air] [nopush|client] | -enter | -spec [side] | -draw N | -churn S|off | "
-                                      "-clear | -where | -near [R] | -slot ID [side] | -window | -web [URL]")
+                                      "-clear | -where | -near [R] | -slot ID [side] | -window | -web [mount|data|stock|URL]")
             elif cmd == "flights":
                 await self.reply(pid, "\n".join(f"{f.n}: {f.callsign}, {f.mission} ({f.loadout})" for f in FLIGHTS))
             elif cmd == "join":
@@ -290,7 +298,11 @@ class Probe:
                 await self.reply(pid, "sent a campaign window (Ctrl+Shift+F9 shows or hides it)"
                                       + ("" if pid in self.client_scripts else " (no client_hello from you yet)"))
             elif cmd == "web":
-                arg = {"url": rest[0]} if rest else {"html": test_page("sent over RPC")}
+                mode = rest[0] if rest else "mount"
+                if mode in ("mount", "data", "stock"):
+                    arg = {"mode": mode, "html": test_page(f"sent over RPC, loaded as {mode}")}
+                else:
+                    arg = {"url": rest[0]}
                 await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignWeb", "args": [arg]})
                 await self.reply(pid, f"sent a web page ({rest[0] if rest else 'the test page'})"
                                       + ("" if pid in self.client_scripts else " (no client_hello from you yet)"))
@@ -680,8 +692,12 @@ async def serve_page(port: int) -> None:
             line = await asyncio.wait_for(reader.readline(), 10)
             while (await asyncio.wait_for(reader.readline(), 10)) not in (b"\r\n", b"\n", b""):
                 pass
-            body = test_page("served over HTTP").encode()
-            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+            if line.startswith(b"GET "):
+                body = test_page("served over HTTP").encode()
+                status, ctype = b"200 OK", b"text/html; charset=utf-8"
+            else:   # only the test page; anything else is someone else's request
+                body, status, ctype = b"not found\n", b"404 Not Found", b"text/plain"
+            writer.write(b"HTTP/1.1 " + status + b"\r\nContent-Type: " + ctype + b"\r\n"
                          + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
             await writer.drain()
             print(f"HTTP    {writer.get_extra_info('peername')[0]} {line.decode(errors='replace').strip()}", flush=True)
@@ -705,6 +721,8 @@ async def main() -> None:
     ap.add_argument("--port", type=int, default=7341)
     ap.add_argument("--web-port", type=int, default=0, help="also serve the -web test page over HTTP on this port")
     args = ap.parse_args()
+    if args.web_port in DCS_PORTS:
+        ap.error(f"--web-port {args.web_port} belongs to DCS ({DCS_PORTS[args.web_port]}); pick another, e.g. 8099")
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
     probe = Probe(args)
     bridge = Bridge(probe.on_message, probe.on_hello, probe.on_disconnect, port=args.port)

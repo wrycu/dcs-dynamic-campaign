@@ -19,7 +19,8 @@ RPC methods (server -> this client):
   campaignEnter()       net.spawn_player() only: enter a slot the server already gave us.
   campaignWindow(spec)  show a campaign window (dxgui): spec = { title, lines = [..],
                         buttons = [{key, label}] }. Ctrl+Shift+F9 shows or hides it.
-  campaignWeb(arg)      open a web page in DCS (its Chromium widget): arg = { html = } or { url = }.
+  campaignWeb(arg)      open a web page in DCS (its Chromium widget): arg = { html =, mode = mount|data|stock }
+                        or { url = }.
 This client -> server:
   campaignClientHello(version)   on each mission load, so the server knows the script is here.
   campaignClick(key)             a window button (or a page's edQuery "click") was pressed.
@@ -85,6 +86,7 @@ end
 
 local HOTKEY = "Ctrl+Shift+F9"   -- shows or hides the campaign window
 local FONT = "PTM75F.ttf"        -- the stock in-mission message font (Scripts/UI/GameInfo.dlg)
+local HEADER = 22                -- title bar height
 
 local function to_server(method, ...)
   RPC.sendEvent(net.get_server_id and net.get_server_id() or 1, method, ...)
@@ -107,10 +109,10 @@ end
 
 -- spec = { title, lines = { "..." }, buttons = { { key =, label = } } }
 local function window_table(spec)
+  -- Run 14k: with headerHeight 0 the window couldn't be dragged; the stock windowSkin's title
+  -- bar (as the web window has) is what you drag by.
   local W, pad = 440, 12
-  local children, y = {}, pad
-  children.txtTitle = static(pad, y, W - 2 * pad, 28, spec.title or "Campaign", 20)
-  y = y + 34
+  local children, y = {}, HEADER + pad
   for i, line in ipairs(spec.lines or {}) do
     children["txtLine" .. i] = static(pad, y, W - 2 * pad, 22, line, 15, "0xd0d0d0ff")
     y = y + 22
@@ -123,32 +125,57 @@ local function window_table(spec)
   children.btnClose = button(pad, y + 4, 120, 28, "Close (" .. HOTKEY .. ")")
   y = y + 4 + 28 + pad
   return { type = "Window",
-    params = { bounds = { x = 60, y = 140, w = W, h = y }, text = "Campaign", enabled = true, draggable = true,
+    params = { bounds = { x = 60, y = 140, w = W, h = y }, text = spec.title or "Campaign", enabled = true, draggable = true,
                hasCursor = true, modal = false, offscreen = false, overlay = false, buddy = false,
                resizable = false, clipResizeCursor = false, lockFlow = false, layout = {}, zOrder = 100000 },
-    skin = { params = { name = "windowSkin", headerHeight = 0 },
+    skin = { params = { name = "windowSkin", headerHeight = HEADER },
              states = { released = { [1] = { bkg = { center_center = "0x1b2633e6" } } } } },
     children = children }
 end
 
 local campaign_window, last_spec = nil, nil
+local shown, shown_bounds = false, nil
+
+-- Run 14k: a window hidden with setVisible(false) no longer gets its hotkey. So it stays
+-- "visible" and is shrunk to nothing instead, without a cursor, and grown back to show it.
+local function set_shown(on)
+  if not campaign_window then return end
+  if on then
+    local b = shown_bounds
+    campaign_window:setBounds(b.x, b.y, b.w, b.h)
+    campaign_window:setHasCursor(true)
+  else
+    local x, y, w, h = campaign_window:getBounds()
+    if shown then shown_bounds = { x = x, y = y, w = w, h = h } end
+    campaign_window:setHasCursor(false)
+    campaign_window:setBounds(x, y, 0, 0)
+  end
+  shown = on
+end
 
 local function show_window(spec, visible)
   local DialogLoader = require("DialogLoader")
+  local keep = campaign_window and shown and { campaign_window:getBounds() } or nil
   if campaign_window then pcall(function() campaign_window:kill() end) end
-  campaign_window = DialogLoader.spawnWidget("dialog", window_table(spec), {}, "campaign_window")
+  local t = window_table(spec)
+  if keep then t.params.bounds.x, t.params.bounds.y = keep[1], keep[2] end  -- stay where it was dragged
+  campaign_window = DialogLoader.spawnWidget("dialog", t, {}, "campaign_window")
+  shown_bounds = { x = t.params.bounds.x, y = t.params.bounds.y, w = t.params.bounds.w, h = t.params.bounds.h }
   for i, b in ipairs(spec.buttons or {}) do
     campaign_window["btnItem" .. i]:addChangeCallback(function()
       log_info("window: clicked " .. tostring(b.key))
       to_server("campaignClick", tostring(b.key))
     end)
   end
-  campaign_window.btnClose:addChangeCallback(function() campaign_window:setVisible(false) end)
+  campaign_window.btnClose:addChangeCallback(function() set_shown(false) end)
+  campaign_window.onClose = function() set_shown(false) end   -- the title bar's X
   campaign_window:addHotKeyCallback(HOTKEY, function()
-    campaign_window:setVisible(not campaign_window:getVisible())
-    log_info("window: hotkey, visible=" .. tostring(campaign_window:getVisible()))
+    set_shown(not shown)
+    log_info("window: hotkey, shown=" .. tostring(shown))
   end)
-  campaign_window:setVisible(visible)
+  campaign_window:setVisible(true)
+  shown = true
+  if not visible then set_shown(false) end
   last_spec = spec
 end
 
@@ -160,8 +187,14 @@ function RPC.method.campaignWindow(sender_id, spec)
 end
 
 -- A web page in a window: DCS's own Chromium widget (WebViewWidget, as the Start Here page uses).
--- arg = { html = "..." } or { url = "..." }. The page is written to Saved Games\DCS\Temp\campaign_web
--- and mounted; a url becomes a page that redirects there. Pages can call Lua with
+-- arg = { html = "...", mode = } or { url = "..." }. Modes, to find out what loads (Run 14k: the
+-- browser was created but a page mounted from Saved Games never showed):
+--   mount  the html is written to Saved Games\DCS\Temp\campaign_web and mounted (forward slashes)
+--   data   the html is loaded as a data: URL
+--   stock  DCS's own Start Here page, the control: if that doesn't show either, the widget
+--          doesn't render here at all
+--   url    (arg.url) that address is loaded
+-- Pages can call Lua with
 -- window.edQuery({ request = JSON.stringify({ method, parameters }), onSuccess, onFailure }):
 -- method "click" sends parameters.key to the server, "close" closes the window.
 local web_window, web_view = nil, nil
@@ -180,18 +213,24 @@ local function open_web(arg)
   local Skin = require("Skin")
   local WebViewWidget = require("WebViewWidget")
   close_web()
-  local dir = lfs.writedir() .. "Temp\\campaign_web\\"
-  lfs.mkdir(lfs.writedir() .. "Temp")
-  lfs.mkdir(dir)
-  local html = arg.html
-  if not html then
-    local url = tostring(arg.url or "about:blank")
-    html = '<!doctype html><meta charset="utf-8"><p>Loading ' .. url .. ' ...</p>'
-        .. '<script>location.replace(' .. net.lua2json(url) .. ')</script>'
+  local mode = arg.url and "url" or tostring(arg.mode or "mount")
+  local html = arg.html or '<!doctype html><meta charset="utf-8"><body style="background:#1b2633;color:#fff">blank</body>'
+  local dir, file, load_url = (lfs.writedir() .. "Temp/campaign_web/"):gsub("\\", "/"), "index.html", nil
+  if mode == "stock" then
+    dir = "./Scripts/UI/StartHereMissions/ui/"
+  else
+    lfs.mkdir(lfs.writedir() .. "Temp")
+    lfs.mkdir(dir)
+    local f = assert(io.open(dir .. file, "wb"))
+    f:write(mode == "mount" and html or '<!doctype html><meta charset="utf-8"><body style="background:#1b2633;color:#fff">loading...</body>')
+    f:close()
+    if mode == "data" then
+      load_url = "data:text/html;charset=utf-8," .. html:gsub("[^%w%-_%.~]", function(c) return string.format("%%%02X", c:byte()) end)
+    elseif mode == "url" then
+      load_url = tostring(arg.url)
+    end
   end
-  local f = assert(io.open(dir .. "index.html", "wb"))
-  f:write(html)
-  f:close()
+  log_info("web: mode " .. mode .. ", mount " .. dir .. file .. (load_url and (", then load " .. load_url:sub(1, 80)) or ""))
 
   local W, H, bar = 960, 680, 34
   web_window = Window.new(80, 80, W, H, "Campaign web")
@@ -205,10 +244,14 @@ local function open_web(arg)
   close:addChangeCallback(function() close_web() end)
   web_window:insertWidget(close)
 
-  web_view = WebViewWidget.new("CampaignWeb", dir, "index.html")
+  web_view = WebViewWidget.new("CampaignWeb", dir, file)
   web_view:setBounds(0, bar, W, H - bar)
   web_view:browserCreated(function(...)
-    log_info("web: browser created"); to_server("campaignWebEvent", "created", "")
+    log_info("web: browser created"); to_server("campaignWebEvent", "created", mode)
+    if load_url then
+      local ok, err = pcall(function() web_view:cefLoadUrl(load_url) end)
+      log_info("web: cefLoadUrl " .. (ok and "called" or ("failed: " .. tostring(err))))
+    end
   end)
   web_view:onPageLoaded(function(...)
     local info = {}
