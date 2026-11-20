@@ -360,6 +360,20 @@ if has_rpc then
   function RPC.method.campaignClientHello(sender_id, version)
     emit("client_hello", { player_id = sender_id, version = version })
   end
+  -- A button in the client script's window or web page. Live only, like chat commands: a click
+  -- must never be replayed after a reconnect.
+  function RPC.method.campaignClick(sender_id, key)
+    if transport.state ~= "ready" then return end
+    local info = net.get_player_info(sender_id) or {}
+    transport.send_volatile("player", { kind = "client_click", player_id = sender_id, ucid = info.ucid or H.ucids[sender_id],
+                                        name = info.name, side = info.side, slot = info.slot, key = tostring(key) })
+  end
+  -- How the client script's window and web page got on (P19 part 3 diagnostics).
+  function RPC.method.campaignWebEvent(sender_id, stage, detail)
+    if transport.state ~= "ready" then return end
+    transport.send_volatile("player", { kind = "client_web", player_id = sender_id, stage = tostring(stage),
+                                        detail = tostring(detail) })
+  end
 end
 
 function H.on_message(msg)

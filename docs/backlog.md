@@ -417,6 +417,15 @@ flight there, and end up in its aircraft. Maybe even walk out to the jet. Overla
 (choosing a flight), 3 (overview) and 4 (overview inside DCS). Proof P19 finds out how much works.
 
 What DCS offers (checked in the 2.9 install, 2026-11-19):
+- **Getting to the jet, decided after P19 (2026-11-19):** three ways, all viable, offered side by
+  side:
+  1. **Drive with Combined Arms** (players who own it): drive a vehicle to the flight's parked jet;
+     the server follows it and moves the player into the jet's slot. Proven in Run 14h.
+  2. **Walk, with the opt-in client script:** eject from a ready-room jet and walk; the client
+     script reports the player's position (the server can't see it otherwise). Not built yet.
+  3. **A unit the engine moves:** no mods; a soldier or vehicle stands in for the player and the
+     engine moves it on their commands.
+  `-join` (teleport into the jet) stays for anyone who just wants to fly.
 - **Walking:** three ways to try, roughest last.
   - **As the pilot after ejecting.** An ejected pilot can walk in first person, and on the ground
     that may be as simple as leaving a parked jet (LCtrl+E three times). The player would start in
@@ -432,8 +441,11 @@ What DCS offers (checked in the 2.9 install, 2026-11-19):
   - **Runs 14g/14h, Combined Arms: works.** A vehicle the player drives is a mission unit, so the
     server follows it and `getPlayerName()` names the driver; driving an armed Humvee to a parked
     Hornet moved the player straight from the Combined Arms slot into the jet's slot, and the
-    client script spawned them. Infantry can't be occupied ("wrong vehicle type"), so
-    it's driving, not walking. Needs the Combined Arms module and blue Combined Arms slots.
+    client script spawned them. Needs the Combined Arms module and blue Combined Arms slots.
+  - **Run 14i, Combined Arms infantry:** of ten soldier types, only `Soldier stinger` can be
+    occupied (the rest: "wrong vehicle type"). The server follows it as it walks, but the player
+    is stuck looking down the Stinger's sight (F1/F2 don't change it), so it's not usable for walking.
+    Combined Arms means driving.
   - **A unit the engine moves.** A soldier or vehicle stands in for the player, moved by the engine
     from F10 menu or chat commands ("walk to Hornet 2"), watched from outside. Janky, but needs
     nothing.

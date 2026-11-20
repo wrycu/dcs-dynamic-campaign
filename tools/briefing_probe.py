@@ -32,6 +32,12 @@ What it finds out:
 6. Combined Arms: take a blue Tactical Commander or JTAC/Operator slot, jump into the "Walker"
    Humvee and drive it to a parked Hornet (SOLDIER and REACH lines); the probe moves you into
    the Ramp slot.
+7. Windows (needs the client script, version 2):
+     -window       a campaign window (dxgui) listing the flights; its "Ramp" button puts you in
+                   the Ramp jet. Ctrl+Shift+F9 shows or hides it.
+     -web [URL]    a web page inside DCS (DCS's own Chromium widget): the probe's test page, or URL.
+   With --web-port N the probe also serves the test page over HTTP (try -web http://SERVER:N/).
+   CLICK lines are buttons pressed; WEB lines say how the window and page got on.
 """
 from __future__ import annotations
 
@@ -144,6 +150,11 @@ class Probe:
             self.client_scripts.add(d.get("player_id"))
             print(f"CLIENT  player id {d.get('player_id')} has the client script (version {d.get('version')})",
                   flush=True)
+        elif kind == "client_click":
+            print(f"CLICK   {d.get('name')} (id {d.get('player_id')}, slot {d.get('slot')!r}): {d.get('key')}", flush=True)
+            asyncio.create_task(self.click(d))
+        elif kind == "client_web":
+            print(f"WEB     player id {d.get('player_id')}: {d.get('stage')} {d.get('detail') or ''}", flush=True)
         elif kind == "frame_stats":
             print(f"FRAME   server avg {d['avg_ms']:.1f} ms, max {d['max_ms']:.0f} ms, {d['over_50ms']} frames over "
                   f"50 ms in {d['seconds']:.0f} s; {self.extra} extra shapes"
@@ -259,7 +270,7 @@ class Probe:
         try:
             if cmd == "help":
                 await self.reply(pid, "-flights | -join N [cold|hot|air] [nopush|client] | -enter | -spec [side] | -draw N | -churn S|off | "
-                                      "-clear | -where | -near [R] | -slot ID [side]")
+                                      "-clear | -where | -near [R] | -slot ID [side] | -window | -web [URL]")
             elif cmd == "flights":
                 await self.reply(pid, "\n".join(f"{f.n}: {f.callsign}, {f.mission} ({f.loadout})" for f in FLIGHTS))
             elif cmd == "join":
@@ -272,6 +283,16 @@ class Probe:
                 # Part 3: the client script calls net.spawn_player(), to enter a slot the server gave us.
                 await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignEnter", "args": []})
                 await self.reply(pid, "asked your client script to enter your slot"
+                                      + ("" if pid in self.client_scripts else " (no client_hello from you yet)"))
+            elif cmd == "window":
+                await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignWindow",
+                                                           "args": [window_spec()]})
+                await self.reply(pid, "sent a campaign window (Ctrl+Shift+F9 shows or hides it)"
+                                      + ("" if pid in self.client_scripts else " (no client_hello from you yet)"))
+            elif cmd == "web":
+                arg = {"url": rest[0]} if rest else {"html": test_page("sent over RPC")}
+                await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignWeb", "args": [arg]})
+                await self.reply(pid, f"sent a web page ({rest[0] if rest else 'the test page'})"
                                       + ("" if pid in self.client_scripts else " (no client_hello from you yet)"))
             elif cmd == "spec":
                 # Run 14: a push into a slot only took when the player was a BLUE spectator, so stay blue
@@ -528,6 +549,25 @@ class Probe:
         else:
             await self.reply(pid, "No client script: click Fly to get in.")
 
+    async def click(self, d: dict) -> None:
+        """A button in the client script's window or web page: "go SLOT" puts the player in that slot."""
+        pid, words = d.get("player_id"), str(d.get("key") or "").split()
+        try:
+            if len(words) == 2 and words[0] == "go":
+                r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": words[1]})
+                print(f"CLICK   force_slot {pid} -> slot {words[1]}: {r}", flush=True)
+                if not (r or {}).get("ok"):
+                    await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": ""})
+                    await asyncio.sleep(1)
+                    r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": words[1]})
+                    print(f"CLICK   via blue spectators: {r}", flush=True)
+                await asyncio.sleep(1)
+                await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignEnter", "args": []})
+            else:
+                await self.reply(pid, f"you clicked {d.get('key')!r}")
+        except (BridgeError, asyncio.TimeoutError) as e:
+            print(f"CLICK   failed: {e}", flush=True)
+
     # ---------- F10 capacity ----------
 
     def extra_shape(self, i: int, center: dict) -> dict:
@@ -592,6 +632,70 @@ class Probe:
                 print(f"CHURN   failed: {e}", flush=True)
 
 
+def window_spec() -> dict:
+    """What -window shows: the flights, and a button into the Ramp jet."""
+    return {"title": "Khalkhalah flights",
+            "lines": [f"{f.n}  {f.callsign}: {f.mission}" for f in FLIGHTS]
+                     + ["", "Buttons go to the server; it answers in chat."],
+            "buttons": [{"key": f"go {WALK_SLOT}", "label": "Ramp: F/A-18C, parked cold"},
+                        {"key": "hello", "label": "Say hello to the server"}]}
+
+
+def test_page(how: str) -> str:
+    """The -web test page: does it render, run JavaScript, and reach Lua (window.edQuery)?"""
+    rows = "".join(f"<li><b>{f.callsign}</b>: {f.mission} <i>({f.loadout})</i></li>" for f in FLIGHTS)
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>Campaign</title><style>
+body {{ background: #1b2633; color: #e8e8e8; font: 16px sans-serif; margin: 16px; }}
+h1 {{ font-size: 22px; margin: 0 0 8px; }} button {{ font-size: 16px; margin: 6px 6px 0 0; padding: 6px 12px; }}
+#status {{ margin-top: 12px; color: #9fd39f; }} .bad {{ color: #f08080 !important; }}
+</style></head><body>
+<h1>Campaign test page</h1>
+<p>Page {how}. JavaScript: <span id="js" class="bad">not running</span>.
+   Lua bridge (window.edQuery): <span id="eq">?</span>. Time: <span id="clock"></span>.</p>
+<ul>{rows}</ul>
+<button onclick="send('go {WALK_SLOT}')">Fly the Ramp jet (F/A-18C, parked cold)</button>
+<button onclick="send('hello from the web page')">Say hello to the server</button>
+<button onclick="call('close', {{}})">Close</button>
+<div id="status"></div>
+<script>
+document.getElementById('js').textContent = 'running'; document.getElementById('js').className = '';
+document.getElementById('eq').textContent = ('edQuery' in window) ? 'yes' : 'no';
+setInterval(function () {{ document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }}, 1000);
+function status(t, bad) {{ var s = document.getElementById('status'); s.textContent = t; s.className = bad ? 'bad' : ''; }}
+function call(method, parameters) {{
+  if (!('edQuery' in window)) {{ status('no window.edQuery: this page cannot reach Lua', true); return; }}
+  window.edQuery({{ request: JSON.stringify({{ method: method, parameters: parameters }}), persistent: false,
+    onSuccess: function (r) {{ status('Lua answered: ' + r); }},
+    onFailure: function (code, msg) {{ status('Lua failed: ' + code + ' ' + msg, true); }} }});
+}}
+function send(key) {{ call('click', {{ key: key }}); }}
+</script></body></html>"""
+
+
+async def serve_page(port: int) -> None:
+    """--web-port: the test page over plain HTTP, to see whether DCS's widget loads a remote page
+    and whether such a page still gets window.edQuery."""
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            line = await asyncio.wait_for(reader.readline(), 10)
+            while (await asyncio.wait_for(reader.readline(), 10)) not in (b"\r\n", b"\n", b""):
+                pass
+            body = test_page("served over HTTP").encode()
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                         + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+            await writer.drain()
+            print(f"HTTP    {writer.get_extra_info('peername')[0]} {line.decode(errors='replace').strip()}", flush=True)
+        except (asyncio.TimeoutError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(handle, "0.0.0.0", port)
+    print(f"HTTP    test page on port {port}", flush=True)
+    async with server:
+        await server.serve_forever()
+
+
 def _fmt(pos: dict | None) -> str:
     return "?" if not pos else f"({pos['x']:.0f}, {pos['y']:.0f})"
 
@@ -599,11 +703,14 @@ def _fmt(pos: dict | None) -> str:
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=7341)
+    ap.add_argument("--web-port", type=int, default=0, help="also serve the -web test page over HTTP on this port")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
     probe = Probe(args)
     bridge = Bridge(probe.on_message, probe.on_hello, probe.on_disconnect, port=args.port)
     await bridge.start()
+    if args.web_port:
+        asyncio.create_task(serve_page(args.web_port))
     print(f"listening on 127.0.0.1:{bridge.port}; load campaign-slots.miz on the server and join it", flush=True)
     await asyncio.Event().wait()
 
