@@ -29,6 +29,9 @@ What it finds out:
 5. Walking: climb out of a parked jet (LCtrl+E three times) and walk. Does the server see you
    (WALKER lines)? Walk up to any parked Hornet: within 15 m the probe tries to put you
    in that flight.
+6. Combined Arms: take a blue Tactical Commander or JTAC/Operator slot, control the "Walker"
+   soldier and walk it to a parked Hornet (SOLDIER and REACH lines); the probe moves you into
+   the Ramp slot.
 """
 from __future__ import annotations
 
@@ -72,6 +75,11 @@ SERVER_PLAYER_ID = 1   # a dedicated server is always player 1
 WALK_SLOT = "3"
 EJECTION_MATCH_M = 3000.0   # a walker is the player who ejected within this distance
 OWN_JET_M = 30.0            # jets this close to where the player ejected are their own; ignored
+# Combined Arms (part 4, Run 14g): the blue soldier from build_test_missions. Unlike an ejected
+# pilot, a soldier a player controls is a mission unit, so the server should know where it is.
+SOLDIER_GROUP = "Walker"
+SOLDIER_POLL_S = 2.0
+CA_SLOT_HINTS = ("artillery_commander", "forward_observer")   # Combined Arms slot ids contain these
 
 FLIGHTS = [
     Flight(1, "Colt 1", "CAS south of Damascus", "AIM-9M*2, AIM-7M*2, FUEL*2"),
@@ -95,6 +103,7 @@ class Probe:
     client_scripts: set[int] = field(default_factory=set)   # player ids that said client_hello
     ejections: list[tuple[str, dict, float]] = field(default_factory=list)   # (player, pilot pos, when)
     walker_owner: dict[str, str] = field(default_factory=dict)   # walker key -> player name
+    soldier_task: asyncio.Task | None = None
 
     # ---------- bridge callbacks ----------
 
@@ -221,6 +230,8 @@ class Probe:
             await self.call(self.mission, "message", {"audience": "all", "duration": 30, "text":
                             "P19 briefing room probe. Type -help in chat (it won't show to others)."})
             print("SETUP   done: 3 flights parked, labels drawn (ALL and BLUE-only near Khalkhalah)", flush=True)
+            if self.soldier_task is None or self.soldier_task.done():
+                self.soldier_task = asyncio.create_task(self.follow_soldier())
         except (BridgeError, asyncio.TimeoutError, KeyError) as e:
             print(f"SETUP   failed: {e}", flush=True)
 
@@ -415,6 +426,76 @@ class Probe:
             await asyncio.sleep(1)
             await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignEnter", "args": []})
             print(f"REACH   asked {name}'s client script to enter", flush=True)
+        else:
+            await self.reply(pid, "No client script: click Fly to get in.")
+
+    async def follow_soldier(self) -> None:
+        """Part 4 with Combined Arms: follow the Walker soldier; within REACH_M of a parked Hornet,
+        move whoever is controlling it into WALK_SLOT."""
+        last: dict | None = None
+        last_player: str | None = "?"
+        done = False
+        while True:
+            await asyncio.sleep(SOLDIER_POLL_S)
+            if self.mission is None:
+                continue
+            try:
+                g = await self.call(self.mission, "query", {"what": "group", "group": SOLDIER_GROUP}, timeout=5)
+                if not g.get("exists"):
+                    if last is not None:
+                        print(f"SOLDIER {SOLDIER_GROUP} is gone", flush=True)
+                        last = None
+                    continue
+                pos = g["units"][0]["pos"]
+                near = await self.call(self.mission, "query", {"what": "objects", "center": pos, "radius": REACH_M,
+                                                               "limit": 10}, timeout=5)
+            except (BridgeError, asyncio.TimeoutError, KeyError, IndexError):
+                continue
+            found = near.get("found") or []
+            me = next((o for o in found if o.get("name") == f"{SOLDIER_GROUP}-1"), {})
+            player = me.get("player")
+            if last is None or math.dist((pos["x"], pos["y"]), (last["x"], last["y"])) > 3 or player != last_player:
+                print(f"SOLDIER {SOLDIER_GROUP} pos={_fmt(pos)} player={player or 'none (getPlayerName)'}", flush=True)
+                last, last_player = pos, player
+            jets = [o for o in found if o.get("type") == HORNET]
+            if not jets:
+                done = False   # walked away: allow another join
+                continue
+            if done:
+                continue
+            done = True
+            jet = jets[0]
+            label = next((f.callsign for f in FLIGHTS if f.static and f.static == jet.get("name")), None) or jet.get("name")
+            print(f"REACH   soldier {SOLDIER_GROUP} reached Hornet {label} ({jet.get('category')}) at "
+                  f"{_fmt(jet.get('pos'))}", flush=True)
+            await self.join_from_soldier(player, label)
+
+    async def join_from_soldier(self, player: str | None, label: str) -> None:
+        players = await self.call(self.hooks, "players", {})
+        for p in players:
+            print(f"REACH   player id {p.get('id')} {p.get('name')} side {p.get('side')} slot {p.get('slot')!r}", flush=True)
+        pid = next((p["id"] for p in players if player and p.get("name") == player), None)
+        how = "by name"
+        if pid is None:
+            ca = [p for p in players if any(h in str(p.get("slot") or "") for h in CA_SLOT_HINTS)]
+            pid = ca[0]["id"] if len(ca) == 1 else None
+            how = "the only player in a Combined Arms slot"
+        if pid is None:
+            print("REACH   can't tell which player controls the soldier; not joining", flush=True)
+            return
+        print(f"REACH   soldier is player id {pid} ({how})", flush=True)
+        await self.reply(pid, f"You walked up to Hornet {label}. Strapping you in (slot {WALK_SLOT})...")
+        r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": WALK_SLOT})
+        print(f"REACH   force_slot {pid} -> slot {WALK_SLOT} straight from Combined Arms: {r}", flush=True)
+        if not (r or {}).get("ok"):
+            r0 = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": ""})
+            await asyncio.sleep(1)
+            r = await self.call(self.hooks, "force_slot", {"player_id": pid, "side": BLUE_ID, "slot": WALK_SLOT})
+            print(f"REACH   via blue spectators: {r0}, then slot {WALK_SLOT}: {r}", flush=True)
+        if pid in self.client_scripts:
+            await asyncio.sleep(1)
+            await self.call(self.hooks, "client_rpc", {"player_id": pid, "method": "campaignEnter", "args": []})
+            print(f"REACH   asked player {pid}'s client script to enter", flush=True)
         else:
             await self.reply(pid, "No client script: click Fly to get in.")
 

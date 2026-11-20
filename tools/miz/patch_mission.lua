@@ -19,6 +19,8 @@ params.lua returns a table:
                   aircraft there, from the warehouse stock, which starts empty), hot start allowed
   parked_client   { name =, airdrome_id =, x =, y = }: add a one-ship Client copy of the first player
                   group, parked cold at that airdrome (DCS picks the spot), or nil
+  combined_arms   { slots =, soldier = { name =, type =, x =, y = } }: that many blue Tactical
+                  Commander and JTAC/Operator slots, and one blue soldier players can control, or nil
 ]]
 
 local params = dofile(arg[1])
@@ -203,6 +205,46 @@ if pc then
   list[#list + 1] = g
 end
 
+-- Combined Arms for blue (P19 part 4: a soldier the player walks, whose position the server knows):
+-- open Tactical Commander and JTAC/Operator slots for blue, and add one blue soldier players can control.
+local ca = params.combined_arms
+if ca then
+  local gc = mission.groundControl or {}
+  mission.groundControl = gc
+  gc.roles = gc.roles or {}
+  gc.passwords = gc.passwords or {}
+  for _, role in ipairs({ "artillery_commander", "forward_observer" }) do
+    gc.roles[role] = gc.roles[role] or { neutrals = 0, blue = 0, red = 0 }
+    gc.roles[role].blue = ca.slots
+    gc.passwords[role] = gc.passwords[role] or {}
+  end
+  local ctry
+  for _, side in pairs(mission.coalition) do
+    for _, c in pairs(side.country or {}) do
+      for _, g in pairs((c.plane or {}).group or {}) do if g == players[1] then ctry = c end end
+    end
+  end
+  assert(ctry, "combined_arms: no country for the first player group")
+  local gmax, umax = max_ids()
+  local s = ca.soldier
+  ctry.vehicle = ctry.vehicle or { group = {} }
+  ctry.vehicle.group = ctry.vehicle.group or {}
+  local list = ctry.vehicle.group
+  list[#list + 1] = {
+    groupId = gmax + 1, name = s.name, x = s.x, y = s.y, visible = false, hidden = false,
+    tasks = {}, task = "Ground Nothing", uncontrollable = false, start_time = 0,
+    units = { [1] = {
+      unitId = umax + 1, name = s.name .. "-1", type = s.type, x = s.x, y = s.y, heading = 0,
+      skill = "Average", playerCanDrive = true,
+    } },
+    route = { points = { [1] = {
+      x = s.x, y = s.y, alt = 0, alt_type = "BARO", type = "Turning Point", action = "Off Road",
+      speed = 0, ETA = 0, ETA_locked = true, formation_template = "", speed_locked = true,
+      task = { id = "ComboTask", params = { tasks = {} } },
+    } } },
+  }
+end
+
 local function merge(dst, src)
   for k, v in pairs(src) do
     if type(v) == "table" and type(dst[k]) == "table" then merge(dst[k], v) else dst[k] = v end
@@ -239,4 +281,5 @@ write_table(params.warehouses_out, "warehouses", warehouses)
 
 print(string.format("patched: %d player group(s), airport %d BLUE, limited aircraft%s%s", #players, params.airdrome_id,
   (params.dynamic and #params.dynamic > 0) and (", dynamic slots at " .. table.concat(params.dynamic, ", ")) or "",
-  pc and string.format(", parked Client %q at airdrome %d", pc.name, pc.airdrome_id) or ""))
+  (pc and string.format(", parked Client %q at airdrome %d", pc.name, pc.airdrome_id) or "")
+  .. (ca and string.format(", Combined Arms: %d blue slots, soldier %q", ca.slots, ca.soldier.name) or "")))

@@ -41,6 +41,8 @@ DYNAMIC_AIRDROMES = {"Khalkhalah": 18, "Tiyas": 39, "Marj Ruhayyil": 23}
 # A Client Hornet parked cold at Khalkhalah (proof P19: force_player_slot + the client script's spawn
 # on a ramp start). DCS picks the parking spot when the player spawns.
 PARKED_CLIENT = {"name": "Ramp", "airdrome_id": AIRDROME_ID, "x": AIRBASE_XY[0], "y": AIRBASE_XY[1]}
+# Combined Arms (P19 part 4): a blue soldier a player can walk, next to where Ramp parked in Run 14d.
+COMBINED_ARMS = {"slots": 2, "soldier": {"name": "Walker", "type": "Soldier M4", "x": -216030.0, "y": 52800.0}}
 
 
 def lua_str(s: str) -> str:
@@ -162,7 +164,7 @@ def main() -> None:
                        "Load campaign bridge", args.server, clients=True)
         slots = build(args.template, args.out, "campaign-slots.miz", "lua/mission/campaign_bridge.lua", "",
                       "Load campaign bridge", args.server, clients=True, dynamic=list(DYNAMIC_AIRDROMES.values()),
-                      extra={"parked_client": PARKED_CLIENT})
+                      extra={"parked_client": PARKED_CLIENT, "combined_arms": COMBINED_ARMS})
         print(f"wrote {server}\nwrote {slots}\nrepo roots tried by the loader: {wine_roots(args.server)}")
         return
     probe = build(args.template, args.out, "campaign-probe.miz", "lua/devtools/probe.lua",
