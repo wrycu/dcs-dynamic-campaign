@@ -29,8 +29,8 @@ What it finds out:
 5. Walking: climb out of a parked jet (LCtrl+E three times) and walk. Does the server see you
    (WALKER lines)? Walk up to any parked Hornet: within 15 m the probe tries to put you
    in that flight.
-6. Combined Arms: take a blue Tactical Commander or JTAC/Operator slot, control the "Walker"
-   soldier and walk it to a parked Hornet (SOLDIER and REACH lines); the probe moves you into
+6. Combined Arms: take a blue Tactical Commander or JTAC/Operator slot, jump into the "Walker"
+   Humvee and drive it to a parked Hornet (SOLDIER and REACH lines); the probe moves you into
    the Ramp slot.
 """
 from __future__ import annotations
@@ -75,8 +75,9 @@ SERVER_PLAYER_ID = 1   # a dedicated server is always player 1
 WALK_SLOT = "3"
 EJECTION_MATCH_M = 3000.0   # a walker is the player who ejected within this distance
 OWN_JET_M = 30.0            # jets this close to where the player ejected are their own; ignored
-# Combined Arms (part 4, Run 14g): the blue soldier from build_test_missions. Unlike an ejected
-# pilot, a soldier a player controls is a mission unit, so the server should know where it is.
+# Combined Arms (part 4, Run 14g): the blue unit "Walker" from build_test_missions (an armed Humvee:
+# Combined Arms can't occupy infantry). Unlike an ejected pilot, a unit a player controls is a
+# mission unit, so the server should know where it is.
 SOLDIER_GROUP = "Walker"
 SOLDIER_POLL_S = 2.0
 CA_SLOT_HINTS = ("artillery_commander", "forward_observer")   # Combined Arms slot ids contain these

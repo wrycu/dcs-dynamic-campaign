@@ -41,8 +41,10 @@ DYNAMIC_AIRDROMES = {"Khalkhalah": 18, "Tiyas": 39, "Marj Ruhayyil": 23}
 # A Client Hornet parked cold at Khalkhalah (proof P19: force_player_slot + the client script's spawn
 # on a ramp start). DCS picks the parking spot when the player spawns.
 PARKED_CLIENT = {"name": "Ramp", "airdrome_id": AIRDROME_ID, "x": AIRBASE_XY[0], "y": AIRBASE_XY[1]}
-# Combined Arms (P19 part 4): a blue soldier a player can walk, next to where Ramp parked in Run 14d.
-COMBINED_ARMS = {"slots": 2, "soldier": {"name": "Walker", "type": "Soldier M4", "x": -216030.0, "y": 52800.0}}
+# Combined Arms (P19 part 4): a blue unit a player can drive to a jet, next to where Ramp parked in
+# Run 14d. An armed Humvee: Combined Arms can't occupy infantry (manual: "First person ground unit
+# control"; Run 14g: "wrong vehicle type" for Soldier M4).
+COMBINED_ARMS = {"slots": 2, "soldier": {"name": "Walker", "type": "M1043 HMMWV Armament", "x": -216030.0, "y": 52800.0}}
 
 
 def lua_str(s: str) -> str:
