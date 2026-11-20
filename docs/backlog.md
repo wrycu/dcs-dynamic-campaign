@@ -429,6 +429,11 @@ What DCS offers (checked in the 2.9 install, 2026-11-19):
     player is. Only the player's own DCS knows (e.g. the client script reading the camera position
     and reporting it over RPC). A walking player can be moved back into a jet (spectators, slot,
     `-enter`).
+  - **Runs 14g/14h, Combined Arms: works.** A vehicle the player drives is a mission unit, so the
+    server follows it and `getPlayerName()` names the driver; driving an armed Humvee to a parked
+    Hornet moved the player straight from the Combined Arms slot into the jet's slot, and the
+    client script spawned them. Infantry can't be occupied ("wrong vehicle type"), so
+    it's driving, not walking. Needs the Combined Arms module and blue Combined Arms slots.
   - **A unit the engine moves.** A soldier or vehicle stands in for the player, moved by the engine
     from F10 menu or chat commands ("walk to Hornet 2"), watched from outside. Janky, but needs
     nothing.

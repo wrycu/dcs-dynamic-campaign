@@ -41,10 +41,20 @@ DYNAMIC_AIRDROMES = {"Khalkhalah": 18, "Tiyas": 39, "Marj Ruhayyil": 23}
 # A Client Hornet parked cold at Khalkhalah (proof P19: force_player_slot + the client script's spawn
 # on a ramp start). DCS picks the parking spot when the player spawns.
 PARKED_CLIENT = {"name": "Ramp", "airdrome_id": AIRDROME_ID, "x": AIRBASE_XY[0], "y": AIRBASE_XY[1]}
-# Combined Arms (P19 part 4): a blue unit a player can drive to a jet, next to where Ramp parked in
-# Run 14d. An armed Humvee: Combined Arms can't occupy infantry (manual: "First person ground unit
-# control"; Run 14g: "wrong vehicle type" for Soldier M4).
-COMBINED_ARMS = {"slots": 2, "soldier": {"name": "Walker", "type": "M1043 HMMWV Armament", "x": -216030.0, "y": 52800.0}}
+# Combined Arms (P19 part 4): blue units a player can take over (RAlt+J), next to where Ramp parked
+# in Run 14d. "Walker" is an armed Humvee: driving it to a jet works (Run 14h). The manual says
+# infantry can't be occupied (Run 14g: "wrong vehicle type" for Soldier M4), but Combined Arms ships
+# infantry sights, so a row of soldier types (Inf-1 ... Inf-N, 10 m apart, east of the Humvee) checks
+# whether any of them can be.
+INFANTRY_TYPES = ["Soldier M4", "Soldier M249", "Soldier M4 GRG", "JTAC", "Soldier stinger", "Soldier RPG",
+                  "Infantry AK", "Infantry AK ver3", "Paratrooper AKS-74", "soldier_wwii_br_01"]
+WALKER_XY = (-216030.0, 52800.0)
+COMBINED_ARMS = {"slots": 2, "units": [
+    {"name": "Walker", "type": "M1043 HMMWV Armament", "x": WALKER_XY[0], "y": WALKER_XY[1]},
+] + [
+    {"name": f"Inf-{i} {t}", "type": t, "x": WALKER_XY[0] - 15.0, "y": WALKER_XY[1] + 10.0 * i}
+    for i, t in enumerate(INFANTRY_TYPES, start=1)
+]}
 
 
 def lua_str(s: str) -> str:

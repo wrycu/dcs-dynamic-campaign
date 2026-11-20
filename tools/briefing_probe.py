@@ -81,6 +81,8 @@ OWN_JET_M = 30.0            # jets this close to where the player ejected are th
 SOLDIER_GROUP = "Walker"
 SOLDIER_POLL_S = 2.0
 CA_SLOT_HINTS = ("artillery_commander", "forward_observer")   # Combined Arms slot ids contain these
+INFANTRY_PREFIX = "Inf-"    # the row of soldier types next to Walker (build_test_missions.INFANTRY_TYPES)
+INFANTRY_RADIUS_M = 150.0
 
 FLIGHTS = [
     Flight(1, "Colt 1", "CAS south of Damascus", "AIM-9M*2, AIM-7M*2, FUEL*2"),
@@ -436,10 +438,14 @@ class Probe:
         last: dict | None = None
         last_player: str | None = "?"
         done = False
+        home: dict | None = None
+        infantry: dict[str, tuple[dict, str | None]] = {}   # unit name -> (pos, player)
         while True:
             await asyncio.sleep(SOLDIER_POLL_S)
             if self.mission is None:
                 continue
+            if home is not None:
+                await self.watch_infantry(home, infantry)
             try:
                 g = await self.call(self.mission, "query", {"what": "group", "group": SOLDIER_GROUP}, timeout=5)
                 if not g.get("exists"):
@@ -448,6 +454,7 @@ class Probe:
                         last = None
                     continue
                 pos = g["units"][0]["pos"]
+                home = home or pos
                 near = await self.call(self.mission, "query", {"what": "objects", "center": pos, "radius": REACH_M,
                                                                "limit": 10}, timeout=5)
             except (BridgeError, asyncio.TimeoutError, KeyError, IndexError):
@@ -470,6 +477,27 @@ class Probe:
             print(f"REACH   soldier {SOLDIER_GROUP} reached Hornet {label} ({jet.get('category')}) at "
                   f"{_fmt(jet.get('pos'))}", flush=True)
             await self.join_from_soldier(player, label)
+
+    async def watch_infantry(self, home: dict, seen: dict[str, tuple[dict, str | None]]) -> None:
+        """Which of the soldier types next to Walker a player has taken over, and whether it moves."""
+        try:
+            r = await self.call(self.mission, "query", {"what": "objects", "center": home,
+                                                        "radius": INFANTRY_RADIUS_M, "limit": 60}, timeout=5)
+        except (BridgeError, asyncio.TimeoutError):
+            return
+        for o in r.get("found") or []:
+            name = o.get("name") or ""
+            if not name.startswith(INFANTRY_PREFIX) or not o.get("pos"):
+                continue
+            pos, player = o["pos"], o.get("player")
+            prev = seen.get(name)
+            if prev is None:
+                print(f"INFANTRY {name} ({o.get('type')}) is in the mission at {_fmt(pos)}", flush=True)
+            elif prev[1] != player or math.dist((pos["x"], pos["y"]), (prev[0]["x"], prev[0]["y"])) > 3:
+                print(f"INFANTRY {name} pos={_fmt(pos)} player={player or 'none'}", flush=True)
+            else:
+                continue
+            seen[name] = (pos, player)
 
     async def join_from_soldier(self, player: str | None, label: str) -> None:
         players = await self.call(self.hooks, "players", {})
