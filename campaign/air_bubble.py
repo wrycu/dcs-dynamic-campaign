@@ -113,11 +113,18 @@ class AirBubble:
     # ---------- inputs ----------
 
     def on_telemetry(self, t: float | None, data: dict[str, Any]) -> None:
-        """Players from telemetry, and the campaign clock from its DCS model time ``t``."""
-        self.observers = [o for o in (observer_from_telemetry(p, self.cfg.lookahead_s)
-                                      for p in as_list(data.get("players")) if isinstance(p, dict)) if o]
+        """Players from telemetry, and the campaign clock from its DCS model time ``t``.
+
+        For a standalone air bubble. The campaign server calls ``observe`` and ``advance`` itself,
+        so the clock moves once per tick for every part of the war."""
+        self.observe(data)
         if t is not None:
             self.advance_to(float(t))
+
+    def observe(self, data: dict[str, Any]) -> None:
+        """Players from a telemetry report."""
+        self.observers = [o for o in (observer_from_telemetry(p, self.cfg.lookahead_s)
+                                      for p in as_list(data.get("players")) if isinstance(p, dict)) if o]
 
     def on_new_run(self) -> None:
         """The mission restarted: its model time starts again from 0."""

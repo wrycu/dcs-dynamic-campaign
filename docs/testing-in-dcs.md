@@ -718,6 +718,136 @@ The probe parks three Hornets at Khalkhalah, one per mock flight (Colt 1, Uzi 2,
 - **Walking works for the player, but the server can't see where they are.** In the parked Hornet, LCtrl+E ×3 fires the ejection seat (`EVENT ejection`, then `landing_after_ejection` for a `pilot_f15_parachute`), and on the ground the player walks in first person wherever they like (videos: down the taxiway, into a shelter, up to a parked Hornet). The server's pilot object goes its own way: in Runs 14d and 14f it walked the same dead-straight line from the same start, at a steady 1.5 m/s, whatever the player did. So the walk is local to the player's PC, and the server can't tell when they reach a jet. When the probe's check did fire (14e, near the jet the player ejected from), moving the walking player to spectators, into slot 3 and `-enter` put them back in a cockpit.
 - **Combined Arms works for getting to the jet** (Runs 14g and 14h). Combined Arms can't occupy infantry ("wrong vehicle type"; the manual lists infantry among the units you can't control), so the test used an armed Humvee (`Walker`, `playerCanDrive`) from a blue Tactical Commander slot (`artillery_commander_blue_2`). A unit a player drives is a mission unit, so the server follows it (positions every 2 s), and `getPlayerName()` on it returns the player while they're in it (`none` before and after). Driving it to Colt 1's parked Hornet triggered `REACH`; `force_player_slot` moved the player straight from the Combined Arms slot into the Ramp slot (`ok: True`, no spectator step), and the client script put them in the cockpit.
 - **Of the infantry, only the Stinger soldier can be occupied** (Run 14i). Ten blue soldier types with `playerCanDrive` all spawned (M4, M249, M4 GRG, JTAC, Stinger, RPG, AK, AK ver3, Paratrooper AKS-74, WWII British); only `Soldier stinger` could be taken over (Combined Arms counts it as an air-defence unit, not infantry), the rest gave "wrong vehicle type". The server sees it like any mission unit: `getPlayerName()` names the player and its position follows them (it moved 10 m when they walked). But the player looks through the Stinger's sight the whole time, so it's no good for walking to a jet (F1 and F2 don't change the view).
+- **The campaign window (dxgui) works** (Runs 14k/14l, client script version 2). The server sends it over RPC (`campaignWindow`: a title, lines and buttons), built from the stock UI pieces (DialogLoader, the in-mission Esc menu's skins). A button press reached the server (`client_click`), and the "Ramp" button put the player in the jet (force_slot, then the client script entered). A window hidden with `setVisible(false)` stops getting its hotkey, so the script shrinks it instead; you drag it by its title bar, which needs the skin's header (`headerHeight` 0 can't be dragged).
+- **DCS's built-in browser doesn't work under Wine/Proton** (Runs 14k/14l). DCS ships CEF 106 (Chromium 106.0.5249.91) as `WebViewWidget`, the widget the Start Here page uses, which is grey on this PC too. The browser starts and fetches pages (the probe's HTTP server saw the request), but the renderer, the process that draws the page, hits a deliberate Chromium crash (`BREAKPOINT` in `libcef.dll`) as soon as it starts and exits within 0.25 s, so the window stays grey. DCS also stutters (about 170 ms hitches) while the widget is open. Tried without success: `cef_use_gpu = false` in `autoexec.cfg` (the renderer still crashes); `--disable-features=RendererCodeIntegrity`; `--single-process` (DCS crashes: the same breakpoint on its in-process renderer thread). DCS passes its own command-line switches on to Chromium (put them in the game's arguments), but forces `--log-severity=disable`. DCS loads every page through its own file system, so `data:` URLs fail (`Can't open file: /data:...`); a page has to come from a mounted folder or over HTTP. Not pursued: another Wine/Proton build (it would upgrade the DCS prefix, which every Lutris entry for DCS shares), and naming the failed check with CEF 106's symbols. Decision: the in-game UI is the dxgui window; the full war map is a normal web page from the engine, outside DCS.
+
 - **Port 8088 belongs to the dedicated server** (Run 14j). Its web GUI posts to `127.0.0.1:8088/encryptedRequest`. With the probe's test web server on 8088, DCS got the probe's answer instead, shut down, and its watchdog restarted it every two minutes until the probe stopped. Anything the engine serves over HTTP must use another port.
 
 **Design that follows:** the engine builds a Client slot into the mission for each player flight. A blue spectator is moved into it with `force_player_slot`; with the client script they're in the jet straight away, without it they click Fly. Dynamic slots aren't used for joining.
+
+## Run 15: the campaign server (`campaign-smoke.miz` + `campaign.server`), backlog item 6
+
+Single player on your PC, FA-18C, about 40 minutes. The first run of the [campaign server](server.md) in DCS: everything the bubble and flight demos did, in one process, on the campaign clock, with saving. The scenario is `khalkhalah`.
+
+Distances are the real settings from `config/campaign.toml`, not the demos' short ones:
+- **Formations** spawn within **20 nm** of you (60 s look-ahead, so about 26 nm when flying straight at them at 350 kt) and leave DCS beyond **25 nm**, after at least 90 s in DCS.
+- **The SA-6** spawns within **21.9 nm** and leaves beyond **26.9 nm**.
+- **AI flights** spawn within **60 nm** and leave DCS beyond **80 nm**, after at least 2 min in DCS. A ramp start spawns if its airbase is within 60 nm.
+
+Nothing on the ground can reach you above 10,000 ft, except the SA-6, which can reach about 13 nm. Stay at **10,000 ft or higher**, and never go closer than **20 nm** to the SA-6.
+
+### The scenario
+| What | Where | Plan |
+|---|---|---|
+| **blue1** | 4 M-1 Abrams, 2 nm S of Khalkhalah | holds |
+| **near1** | 2 BTR-80, 2 Ural (red), 3 nm N | holds |
+| **armor1** | 4 T-72B, 4 BMP-2 (red), 13 nm N | holds; Blue CAS's target |
+| **mech1** | 6 BTR-80, 2 Ural (red), 24 nm N | holds |
+| **sa6** | SA-6 battery (red), 32 nm E | holds |
+| **Red Ferry** | 2 MiG-29A, unarmed, weapons hold | T+0:00 air start 60 nm N at 20,000 ft. Orbits 35 nm N from about T+3:30 to T+18:30, then flies north and leaves the map at about T+26. |
+| **Blue Ferry** | 2 F/A-18C, unarmed | Ramp start at the airbase closest to 100 nm away (Status names it in `Blue Hornets (<base>)`) at T+1:00. Flies to Khalkhalah and lands. |
+| **Blue CAS** | 2 F/A-18C with Mavericks | Ramp start at Khalkhalah at T+5:00. Attacks armor1, then lands at Khalkhalah. |
+
+**Where to look:**
+- **Messages on screen:** the server announces every change, e.g. `Red Ferry: spawned` or `mech1: spawned, 8 vehicles`. They're also in the terminal as `FLIGHT` and `GROUND` lines.
+- **The F10 map:** a label for every formation and flight. `[DCS]` means it's in DCS, and coloured red or blue; `[engine]` means it's data only. Grey means a formation not in DCS.
+- **F10 > Other > Campaign > Status:** the campaign time `T+h:mm:ss`, and the magnetic bearing and range from you to every flight and formation, with altitudes, orbit time left, and each squadron's ready aircraft.
+
+### Setup
+1. In a terminal, from the repo (`~/PycharmProjects/dcs-dynamic-campaign`), write the waypoint cartridge into your DTC folder:
+   ```bash
+   python3 -m campaign.scenarios.khalkhalah "$HOME/Games/dcs-world/drive_c/users/tim/Saved Games/DCS/DTC"
+   ```
+   It writes `khalkhalah_test.dtc` with these waypoints:
+   - **WP1:** 8 nm N of Khalkhalah. Watch Blue CAS from here; armor1 is 5 nm further north.
+   - **WP2:** mech1, 24 nm N.
+   - **WP3:** Red Ferry's orbit, 35 nm N.
+   - **WP4:** Khalkhalah.
+   - **WP5:** 12 nm E of Khalkhalah, which is 20 nm from the SA-6.
+2. Start the server, with a fresh campaign. Leave the terminal open:
+   ```bash
+   python3 -m campaign.server --new --scenario khalkhalah
+   ```
+   Expect `new campaign: build/saves/campaign.json (scenario khalkhalah)`, then `listening on 127.0.0.1:7341; waiting for DCS`.
+3. In DCS, open **Mission** and load `campaign-dev/campaign-smoke.miz` from your Missions folder (the same mission as Runs 5–7; `build/campaign-smoke.miz` copied there).
+   - On the briefing screen, click **Open DTC**, import `khalkhalah_test.dtc`, and load it. Then press **FLY**.
+   - In the jet, go to MENU (SUPT) → **MUMI**, check that **WYPT** is boxed, and let the transfer run. On the HSI you can then step through WP1–5.
+4. You start about 4 nm south of Khalkhalah at about 10,000 ft. Turn on the autopilot or settle into a slow orbit right away.
+
+### Steps
+**1. Connect and start (T+0:00 to T+1:00).** Stay near the start point.
+- Terminal: `HELLO mission run=... new_run=True map=Syria`, then `scenario khalkhalah set up: ...` and `saved build/saves/campaign.json`.
+- On screen:
+  - `Campaign server: scenario khalkhalah...` (already seen);
+  - `blue1: spawned, 4 vehicles`, `near1: spawned, 4 vehicles` and `armor1: spawned, 8 vehicles`;
+  - `Red Ferry: took off (not in DCS)`.
+- Within about a minute: `Red Ferry: spawned`. It starts 64 nm from you and flies toward you, so it crosses 60 nm quickly.
+- Status:
+  - `Red Ferry: 2x FERRY enroute [DCS] 355M ~58 nm 20,000 ft`;
+  - `Blue CAS: 2x CAS planned at T+5 min`;
+  - `mech1: 8 veh [engine] 355M 28 nm`;
+  - `sa6: 4 veh [engine] 077M 32 nm`.
+- F10 map: blue1, near1 and armor1 labelled `[DCS]` in colour, with the vehicles on the map next to them. mech1 and sa6 are grey `[engine]`.
+- ✅ Pass if: the formations within 20 nm are in DCS and the others aren't, and Red Ferry spawned in the air at its label.
+
+**2. Pause (1 minute).** Note the `T+` time in Status, press **Pause** for one real minute, unpause, and check Status again.
+- ✅ Pass if: the campaign time moved on by only the few seconds you were unpaused, not a minute.
+
+**3. Blue CAS and Blue Ferry (T+1:00 to about T+12:00).** Fly to **WP1**: 355M, about 12 nm. Orbit there at 10,000 ft or higher.
+- Just before you pass over the field: `mech1: spawned, 8 vehicles` (you're about 26 nm from it, heading at it).
+- At T+1:00: `Blue Ferry: took off (not in DCS)`. Its `[engine]` label appears at its base, about 100 nm away, and moves toward Khalkhalah.
+- When Blue Ferry comes within 60 nm of you, about 4–6 minutes later: `Blue Ferry: spawned`. Two clean Hornets appear in the air at its label. Check that they're at a sensible altitude, heading for Khalkhalah, and flying on normally.
+- At T+5:00: `Blue CAS: spawned`. Two Hornets appear on the ramp at Khalkhalah (look on the F10 map, or F7 for AI aircraft views).
+- Within about 5 minutes: `Blue CAS: took off from Khalkhalah`. Note the time.
+- Blue CAS flies north past you and attacks armor1. Terminal: `EVENT unit_killed ...` lines. Status shows armor1's vehicle count going down.
+- ✅ Pass if: Blue Ferry spawned in the air on its way in, and Blue CAS started on the ramp, took off, and attacked.
+
+**4. Red Ferry, and formations leaving DCS (about T+12:00 to T+17:00).** Fly to **WP2** (mech1, 355M 16 nm), then on to **WP3** (Red Ferry's orbit, 355M 11 nm).
+- Passing WP2: `blue1: aggregated, 4 vehicles`, once you're more than 25 nm from it and it has been in DCS for at least 90 s. Its label turns grey `[engine]`.
+- Before WP3: `near1: aggregated, 4 vehicles`, at about 28 nm north of the field.
+- Near WP3: radar (RWS, 40 nm scale) shows 2 contacts at about 20,000 ft. The MiGs are at their label.
+- Status: `Red Ferry: 2x FERRY enroute [DCS] ... orbiting N min more`. Check it twice, a minute apart: N goes down by 1.
+- ✅ Pass if: the formations behind you left DCS, and Red Ferry is orbiting where Status says.
+
+**5. The SA-6, and Red Ferry leaving (about T+17:00 to T+27:00).** Fly to **WP5**: about 156M, 37 nm. **Stop at WP5 and orbit there.** Don't go further east.
+- Along the way, armor1 and mech1 leave DCS: `armor1: aggregated, N vehicles` (with N being what Blue CAS left), and `mech1: aggregated, 8 vehicles`.
+- About 11 nm before WP5, when you're about 26 nm from the SA-6 (21.9 nm plus the look-ahead): `sa6: spawned, 4 vehicles`. The RWR shows a `6` search radar off to the east (about 085M from WP5). At WP5 you're 20 nm away, outside its reach.
+- After T+18:30, Red Ferry's orbit ends and it flies north. Once it's more than 80 nm from you: `Red Ferry: aggregated in the air`. The MiGs vanish, and the label stays as `[engine]` and keeps moving north.
+- At about T+26: `Red Ferry: left the map (not in DCS): 2 aircraft back to the squadron`. Status shows `Red MiG-29s (off map): 8 ready`.
+- ✅ Pass if: the SA-6 was up before you were within 22 nm, and Red Ferry finished its route in the engine.
+
+**6. Landings (any time after about T+15:00).** Don't wait for these; check them when they happen.
+- `Blue Ferry: landed at Khalkhalah`, then, after taxi and shutdown (up to 10 minutes), `Blue Ferry: recovered: 2 aircraft back to the squadron`.
+- The same for Blue CAS, after its attack.
+- Status: both Blue Hornets squadrons back to `8 ready`, or fewer if a Hornet was lost.
+- ✅ Pass if: both flights landed and were recovered.
+
+**7. Engine restart.** While flying, stop the server in the terminal with **Ctrl+C**. Expect `stopping` and `saved ...`. Within 20 s, start it again **without** `--new`:
+```bash
+python3 -m campaign.server
+```
+- Expect `loaded build/saves/campaign.json (scenario khalkhalah)`, then `HELLO mission ... new_run=False`.
+- Nothing is duplicated: no second copy of the SA-6 or of any flight on the F10 map. Nothing vanishes.
+- Status works, and the `T+` time carries on from where it was.
+- ✅ Pass if: everything carried on as if the server hadn't stopped.
+
+**8. Mission restart.** Restart the mission with **LShift+R**, or from the Esc menu. Reload the cartridge and do the MUMI transfer again if you want the waypoints.
+- Terminal: `HELLO mission ... new_run=True`.
+- On screen, again: `Campaign server: scenario khalkhalah...`.
+- The formations near the start point spawn again: blue1 with 4 vehicles and near1 with 4. armor1 comes back with only what Blue CAS left of it. The `T+` time carries on and doesn't restart at 0.
+- Flights that were airborne in DCS come back in the air where the engine had them. Flights that had finished stay finished.
+- ✅ Pass if: losses and the clock survived the mission restart.
+
+**9. Stop.** Exit the mission, wait 10 s, and then press Ctrl+C in the terminal.
+
+### What to send back
+- Tell me it's done. `build/logs/server.log` is on this PC, so I'll read it myself.
+- For each step: pass, or what happened instead.
+- For each air spawn (Red Ferry in step 1, Blue Ferry in step 3, any in step 8): did the jets appear at their label, at a sensible altitude and heading, and fly on normally?
+- Anything that spawned, vanished or got stuck when it shouldn't have, with the `T+` time from Status.
+
+### First try (2026-11-23): stopped at step 5, three bugs found
+- **Worked:** set-up and messages; blue1, near1, armor1 and mech1 spawned and left DCS where expected; Red Ferry spawned in the air at T+0:03; Blue Ferry spawned in the air at T+3:12, landed, and was recovered.
+- **Ctrl-C hung the server.** Since Python 3.12, `Server.wait_closed()` waits for every open connection, and DCS keeps its connections open. The server saved, stopped listening, and then waited forever. That also broke the mission restart: the restarted mission had nothing to connect to. Ctrl-C also killed `tee`, so the log ends at T+0:03:51. Fixed: connections are closed first; a second Ctrl-C quits at once; the server writes `build/logs/server.log` itself.
+- **A target left DCS while an AI flight was attacking it.** The engine follows a flight in DCS by the waypoints it comes near (within 9 km). Blue CAS's egress point was 3 nm from its ingress point, so the engine counted the attack as done before the flight reached the target. Nothing kept a target in DCS for an AI attacker anyway; only players did. Fixed: an attack waypoint is passed only by reaching it; enemy formations in an attack zone spawn when the attacking flight in DCS comes within their spawn distance, and stay until it leaves the attack behind. Blue CAS now egresses 8 nm west.
+- **Blue CAS's lead (Colt 2-1) went after the SA-6** (from your Tacview recording). You were orbiting across the SA-6's spawn and despawn distances, so it spawned and despawned five times, each time after the 90 s minimum. On its first spawn (T+6), Colt 2-1 left its route and flew to within 8 nm of the SA-6. The SA-6 left DCS at T+10:40, and Colt 2-1 turned back and fired its Mavericks at armor1 (T+14 to T+15). Colt 2-2 attacked armor1 all along. Nothing had tasked the lead against the SA-6: with ROE weapons free, the AI goes for targets of opportunity. Fixed, to check in DCS: flights other than fighters (CAS, SEAD, strike) now use ROE open fire, so they only engage what their tasks name; fighters stay weapons free, ferries weapons hold.

@@ -190,7 +190,8 @@ end
 -- arg = { html = "...", mode = } or { url = "..." }. Modes, to find out what loads (Run 14k: the
 -- browser was created but a page mounted from Saved Games never showed):
 --   mount  the html is written to Saved Games\DCS\Temp\campaign_web and mounted (forward slashes)
---   data   the html is loaded as a data: URL
+--   data   the html is loaded as a data: URL (Run 14l: never works; DCS loads every page through
+--          its own file system: "Can't open file: /data:...")
 --   stock  DCS's own Start Here page, the control: if that doesn't show either, the widget
 --          doesn't render here at all
 --   url    (arg.url) that address is loaded

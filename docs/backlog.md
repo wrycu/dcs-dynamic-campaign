@@ -1,7 +1,7 @@
 # Backlog
 
 The big items. Items 1–5 were asked for; 6–13 are needed for a working campaign; 14–19 are
-worth having; 20–38 are further features, many from BMS; 39 (kneeboards) is needed; 40 deepens the P7 combat model; 41 is the briefing-room idea. The order
+worth having; 20–38 are further features, many from BMS; 39 (kneeboards) is needed; 40 deepens the P7 combat model; 41 is the briefing-room idea; 42 speeds up the war while pilots pick a flight; 43 makes players' airfields look alive. The order
 they're done in, and which need proving first, is in the [roadmap](roadmap.md). Smaller known
 gaps live in each area's "Not done yet" section ([air](air.md#not-done-yet),
 [bubble](bubble.md#not-done-yet)).
@@ -126,6 +126,11 @@ Everything below plugs into it, so it comes first.
 - A clear order for each tick: telemetry and events in, clock advance, war simulation, planning,
   bubbles, save.
 - The demos become thin scripts that set up a scenario on top of it, or get retired.
+- **Built (2026-11-20):** `campaign/server.py` ([server](server.md)), with `[server]` settings, plug-in
+  points for the war simulation and the planner, scenarios in `campaign/scenarios/` (the first,
+  `khalkhalah`, is the bubble and flight demos together), save on stop and a status line and
+  F10 status. Checked locally against a fake mission; not yet run in DCS. The demos stay until it
+  has been.
 
 ## 7. Theater data
 
@@ -505,6 +510,48 @@ the v0.181 download (readme and Lua only; nothing run):
   - The readme has no license. Ask VNAO before shipping it or a changed copy.
 - **Links:** [the mod](https://www.digitalcombatsimulator.com/en/files/3310351),
   [the VR ready room thread](https://forum.dcs.world/topic/186044-vnao-vr-ready-room-mod).
+
+## 42. Faster war while pilots pick a flight (BMS: time compression)
+
+Like the BMS campaign UI: while the players on the server are looking at the war (the overview,
+item 3/4/41) and choosing a flight, the war runs at a multiple of real time. Once a pilot
+commits to a flight, it drops to real time. Asked for 2026-11-20.
+
+- **Fast:** players are connected but nobody has committed (spectators, the war UI, the
+  briefing room). The clock runs at `[server] pick_speed` (e.g. 10x; 1 turns it off). Flights
+  move, takeoff times come up, the ATO turns over, so there is always something about to launch.
+- **Real time:** from the moment anyone commits to a flight (picks it in the UI, item 2), before
+  their jet spawns, so the bubble around them fills at real time. One war for everyone: one
+  committed pilot slows it for all. It goes fast again when nobody is committed or flying
+  (after a short hold, so it doesn't flap).
+- **Fits D1:** the war still only moves while people are on the server. Nobody connected
+  still pauses it.
+- **Committing to a flight far in the future:** at 1x a pilot could wait an hour for takeoff.
+  Either only offer flights taking off soon (BMS lists those and the pilot waits in the UI), or
+  keep fast time until the committed flight's takeoff is a few minutes away, then drop to 1x.
+- **Safe because of the bubbles:** before anyone commits, nothing is near a player, so every
+  flight and formation is engine-only and nothing in DCS has to keep up. Until the abstract
+  fights exist (item 8, "Air combat and fuel" below), fast time only moves flights and the
+  clock.
+- `WarClock` multiplies the model-time step, and its 120 s cap scales with it.
+- **DCS time of day stays at 1x,** so the sun falls behind the campaign clock during a session.
+  The next mission restart (item 12) catches it up. Show it in Status, and maybe cap the
+  speed-up per session.
+- **Show the speed** in Status and on the war map, and announce changes ("War at 10x" / "Viper 1
+  committed: real time").
+
+## 43. Living airfields
+
+An airfield that a human flight departs from or recovers to (including diverts, item 24) should
+look in use while players are there: parked aircraft, ground crew and vehicles, fuel trucks, and
+air defence. Not for AI flights: too much to spawn for nobody to see. Asked for 2026-11-23.
+
+- Ideally the real assets: the squadrons based there (item 7's theater data, item 34) parked in
+  their own spots, their losses showing as empty spots or wrecks (item 15), and the base's
+  defences from the campaign state.
+- Static objects where possible (cheap), live units only for what has to act (air defence).
+- In DCS while a player is at or near the base (taking off, landing, or diverting there), gone
+  when they've left. The parking that flights need stays free.
 
 ## Minor improvements
 

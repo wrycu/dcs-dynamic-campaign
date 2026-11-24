@@ -77,6 +77,14 @@ class BuildTests(unittest.TestCase):
                if t["id"] == "WrappedAction" and t["params"]["action"]["params"]["name"] == 0]
         self.assertEqual((roe, g["units"][0]["payload"]["pylons"]), ([4], {}))
 
+    def test_roe_by_mission(self):
+        def roe(mission):
+            g = build_flight_spawn(flight(mission=mission, loadout=""), "MiG-29A", Side.RED).data["group"]
+            return [t["params"]["action"]["params"]["value"] for t in g["route"]["points"][0]["task"]["params"]["tasks"]
+                    if t["id"] == "WrappedAction" and t["params"]["action"]["params"]["name"] == 0]
+        # Fighters weapons free; CAS etc. only what their tasks name (Run 15: CAS went after an SA-6).
+        self.assertEqual((roe("BARCAP"), roe("CAS"), roe("SEAD"), roe("FERRY")), ([0], [2], [2], [4]))
+
     def test_errors(self):
         with self.assertRaises(ValueError):
             build_flight_spawn(flight(start=StartMode.RAMP_HOT), "MiG-29A", Side.RED)  # no airbase
@@ -243,6 +251,16 @@ class AirSpawnerTests(unittest.IsolatedAsyncioTestCase):
         await self.air.aggregate(f)
         self.assertEqual(fly(f, 0, 1), None)  # flies on to the field
         self.assertEqual(fly(f, 1, 600), "LAND")
+
+    async def test_an_attack_waypoint_is_never_skipped(self):
+        # Run 15: Blue CAS's egress point was near its ingress, so the attack was marked done early.
+        attack = Waypoint(Pos(30_000, 0), 4_000, action="CAS")
+        f = self.add(flight(wps=[Waypoint(Pos(0, 0), 4_000), attack, Waypoint(Pos(0, 5_000), 4_000)]))
+        await self.air.spawn(f)
+        self.tele(1_000)            # near the ingress and the egress point, attack still ahead
+        self.assertEqual(f.next_wp, 1)
+        self.tele(29_000)           # at the target
+        self.assertEqual(f.next_wp, 2)
 
     async def test_orbit_tracked_on_campaign_clock(self):
         f = self.add(flight())

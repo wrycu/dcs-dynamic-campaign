@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from .catalog import threat_range
-from .model import GroundUnit, Pos, SpawnState
+from .flight_spawn import ATTACK_RADIUS_M
+from .model import Flight, FlightState, GroundUnit, Pos, Side, SpawnState
 
 NM = 1852.0  # metres per nautical mile
 
@@ -110,6 +111,38 @@ def nearest(pos: Pos, observers: Iterable[Observer]) -> float:
     return best
 
 
+def attack_targets(flights: Iterable[Flight], units: Iterable[GroundUnit], side_of: dict[str, Side],
+                   cfg: BubbleConfig) -> tuple[set[str], set[str]]:
+    """Formations that AI flights in DCS are on their way to attack, or attacking.
+
+    Without this, a target could leave DCS (no player near it) while the flight attacking it is
+    in DCS, and the flight would find nothing and go home. Returns ``(keep, spawn)``:
+    keep: every enemy formation in the zone of an attack waypoint the flight hasn't left
+          behind (the next one, or the one it just passed, since it attacks after reaching it);
+    spawn: those of them the flight is within the formation's spawn distance of, i.e. what a
+           player there would get.
+    side_of: flight id -> its side.
+    """
+    units = list(units)
+    keep: set[str] = set()
+    spawn: set[str] = set()
+    for f in flights:
+        if f.spawn is not SpawnState.SPAWNED or f.state in (FlightState.LANDED, FlightState.LOST):
+            continue
+        side = side_of.get(f.id)
+        for wp in f.waypoints[max(f.next_wp - 1, 0):]:
+            radius = wp.params.get("radius_m", ATTACK_RADIUS_M.get(wp.action or ""))
+            if radius is None:
+                continue
+            for u in units:
+                if u.side is side or strength(u) == 0 or _dist(u.pos, wp.pos) > radius:
+                    continue
+                keep.add(u.id)
+                if f.pos is not None and _dist(u.pos, f.pos) <= spawn_radius(u, cfg):
+                    spawn.add(u.id)
+    return keep, spawn
+
+
 def plan_ground(
     units: Iterable[GroundUnit],
     observers: list[Observer],
@@ -120,6 +153,7 @@ def plan_ground(
     busy: set[str] | frozenset[str] = frozenset(),
     pinned: set[str] | frozenset[str] = frozenset(),
     blocked: set[str] | frozenset[str] = frozenset(),
+    forced: set[str] | frozenset[str] = frozenset(),
 ) -> SpawnPlan:
     """Return which formations to spawn and despawn.
 
@@ -127,6 +161,7 @@ def plan_ground(
     busy:       units with a spawn/despawn command in flight; left alone this tick
     pinned:     units that must not be despawned (recently in combat)
     blocked:    units that may not be spawned yet (backing off after a failure)
+    forced:     units to spawn (and keep) with no player near, e.g. an AI flight's target
     """
     spawned_at = spawned_at or {}
     keep: list[tuple[float, GroundUnit]] = []     # (relevance, unit); lower = more relevant
@@ -144,10 +179,10 @@ def plan_ground(
                 plan.despawn.append(u.id)
             continue
         dist = nearest(u.pos, observers)
-        rel = dist / spawn_radius(u, cfg)
+        rel = 0.0 if u.id in forced else dist / spawn_radius(u, cfg)
         if u.spawn is SpawnState.SPAWNED:
             young = now - spawned_at.get(u.id, -math.inf) < cfg.min_dwell
-            if dist <= despawn_radius(u, cfg) or young or u.id in pinned:
+            if dist <= despawn_radius(u, cfg) or young or u.id in pinned or u.id in forced:
                 keep.append((rel, u))
             else:
                 plan.despawn.append(u.id)
@@ -162,7 +197,7 @@ def plan_ground(
     for rel, u in reversed(keep):
         if used <= cfg.max_units:
             break
-        if u.id in pinned or now - spawned_at.get(u.id, -math.inf) < cfg.min_dwell:
+        if u.id in pinned or u.id in forced or now - spawned_at.get(u.id, -math.inf) < cfg.min_dwell:
             continue
         plan.despawn.append(u.id)
         used -= strength(u)

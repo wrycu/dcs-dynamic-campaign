@@ -156,14 +156,21 @@ class Bridge:
         log.info("bridge listening on %s:%d", self._host, self.port)
 
     async def close(self) -> None:
+        # Stop listening, then close the connections, and only then wait for the server: since
+        # Python 3.12, Server.wait_closed() also waits for every open connection, so waiting
+        # first hangs for as long as DCS stays connected.
         if self._server is not None:
             self._server.close()
-            await self._server.wait_closed()
         for conn in list(self.connections.values()):
             await conn.close()
         for task in list(self._client_tasks):
             task.cancel()
         await asyncio.gather(*self._client_tasks, return_exceptions=True)
+        if self._server is not None:
+            try:
+                await asyncio.wait_for(self._server.wait_closed(), 5)
+            except asyncio.TimeoutError:
+                log.warning("bridge: server still had connections after 5 s; closing anyway")
 
     def run_state(self, src: str) -> tuple[str, int] | None:
         """(run_id, seq) for a source: the last sequenced message whose handler has finished.

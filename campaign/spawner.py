@@ -38,12 +38,14 @@ MISSING_TICKS = 2         # telemetry reports without a spawned group before it 
 class GroundSpawner:
     def __init__(self, state: CampaignState, call: Call, cfg: BubbleConfig | None = None,
                  clock: Callable[[], float] = time.monotonic,
-                 on_change: Callable[[GroundUnit], None] | None = None) -> None:
+                 on_change: Callable[[GroundUnit], None] | None = None,
+                 targets: Callable[[], tuple[set[str], set[str]]] | None = None) -> None:
         self.state = state
         self.call = call
         self.cfg = cfg or BubbleConfig()
         self.clock = clock
         self.on_change = on_change  # called after a formation spawns, despawns or is destroyed
+        self.targets = targets      # (keep, spawn): AI flights' targets, see bubble.attack_targets
         self.observers: list[Observer] = []
         self.spawned_at: dict[str, float] = {}
         self.busy: set[str] = set()
@@ -139,11 +141,13 @@ class GroundSpawner:
 
     def plan(self) -> SpawnPlan:
         now = self.clock()
+        keep, spawn = self.targets() if self.targets else (set(), set())
         return plan_ground(
             self.state.ground_units.values(), self.observers, now, self.cfg,
             spawned_at=self.spawned_at, busy=self.busy,
-            pinned={k for k, t in self.engaged_until.items() if t > now},
+            pinned={k for k, t in self.engaged_until.items() if t > now} | keep,
             blocked={k for k, t in self.backoff_until.items() if t > now},
+            forced=spawn,
         )
 
     async def tick(self) -> SpawnPlan:

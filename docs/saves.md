@@ -1,6 +1,6 @@
 # Saves
 
-`campaign/persist.py` saves and loads the campaign. `tools/demo_save.py` wires it into the demos.
+`campaign/persist.py` saves and loads the campaign. The [campaign server](server.md) uses it directly; `tools/demo_save.py` wires it into the demos.
 
 ## What's in a save
 

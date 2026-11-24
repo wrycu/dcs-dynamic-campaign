@@ -7,7 +7,7 @@ silently fall back to a default.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -52,10 +52,69 @@ def bubble_config(section: dict[str, Any], base: BubbleConfig | None = None) -> 
         raise SettingsError(f"[bubble]: {e}") from e
 
 
-def load_bubble_config(path: Path, base: BubbleConfig | None = None) -> BubbleConfig:
+def _read(path: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as f:
-            doc = tomllib.load(f)
+            return tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
         raise SettingsError(f"{path}: {e}") from e
-    return bubble_config(doc.get("bubble", {}), base)
+
+
+def load_bubble_config(path: Path, base: BubbleConfig | None = None) -> BubbleConfig:
+    return bubble_config(_read(path).get("bubble", {}), base)
+
+
+# ---------- [server] ----------
+
+@dataclass
+class ServerConfig:
+    """How the campaign server runs (campaign/server.py)."""
+    host: str = "127.0.0.1"         # the bridge listens here; DCS runs on the same machine
+    port: int = 7341
+    save: str = "build/saves/campaign.json"
+    autosave_s: float = 30.0        # real seconds between saves while something changes
+    status_s: float = 60.0          # real seconds between status lines on the console
+    slot_sides: list[int] = field(default_factory=lambda: [0, 2])   # spectators and blue (PvE)
+
+    def __post_init__(self) -> None:
+        if not 0 < self.port < 65536:
+            raise ValueError("port must be 1-65535")
+        if self.autosave_s <= 0 or self.status_s <= 0:
+            raise ValueError("autosave_s and status_s must be positive")
+        if not self.slot_sides or any(s not in (0, 1, 2) for s in self.slot_sides):
+            raise ValueError("slot_sides must list sides 0 (spectators), 1 (red) or 2 (blue)")
+
+
+SERVER_TYPES: dict[str, type | tuple[type, ...]] = {
+    "host": str, "port": int, "save": str, "autosave_s": (int, float), "status_s": (int, float), "slot_sides": list,
+}
+
+
+def server_config(section: dict[str, Any], base: ServerConfig | None = None) -> ServerConfig:
+    """Apply a ``[server]`` table on top of ``base`` (default: ServerConfig())."""
+    unknown = set(section) - set(SERVER_TYPES)
+    if unknown:
+        raise SettingsError(f"unknown [server] settings: {', '.join(sorted(unknown))}; "
+                            f"known: {', '.join(SERVER_TYPES)}")
+    for key, value in section.items():
+        if isinstance(value, bool) or not isinstance(value, SERVER_TYPES[key]):
+            raise SettingsError(f"[server] {key} has the wrong type: {value!r}")
+    try:
+        return replace(base or ServerConfig(), **section)
+    except ValueError as e:
+        raise SettingsError(f"[server]: {e}") from e
+
+
+@dataclass
+class Settings:
+    server: ServerConfig
+    bubble: BubbleConfig
+
+
+def load_settings(path: Path | None) -> Settings:
+    """The whole settings file; without one, the defaults. Unknown sections are an error too."""
+    doc = _read(path) if path else {}
+    unknown = set(doc) - {"server", "bubble"}
+    if unknown:
+        raise SettingsError(f"unknown sections: {', '.join(sorted(unknown))}; known: server, bubble")
+    return Settings(server=server_config(doc.get("server", {})), bubble=bubble_config(doc.get("bubble", {})))

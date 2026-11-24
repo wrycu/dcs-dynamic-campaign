@@ -13,7 +13,8 @@ flight's waypoints from ``next_wp`` on. Waypoint actions:
 - ``EXIT``    fly there; the air spawner despawns the flight on arrival (leaving the map)
 - ``LAND``    land at ``params.airdrome_id``; must be last
 
-Every flight also gets, at its first point: ROE weapons free, RTB on bingo fuel, and an en-route
+Every flight also gets, at its first point: ROE (fighters weapons free, ferries weapons hold, others
+open fire: only what their tasks name), RTB on bingo fuel, and an en-route
 "engage air targets within ``AIR_ENGAGE_M``" for fighter missions (CAP, SWEEP, ESCORT, INTERCEPT).
 """
 from __future__ import annotations
@@ -30,6 +31,8 @@ from .protocol import PREFIX_FLIGHT, group_name, unit_name
 AIR_ENGAGE_M = 60_000      # fighters engage air targets this far from their route
 CRUISE_MS = 220.0          # default route speed (about 430 kt TAS)
 ORBIT_DEFAULT_S = 1200
+# Waypoint actions that attack the ground, and their default zone radius in metres (BOMB: the point).
+ATTACK_RADIUS_M = {"CAS": 9_000, "SEAD": 30_000, "BOMB": 2_000}
 FORMATION_M = 150          # spacing between aircraft at an air start
 
 # Flight.mission -> DCS group task (determines which tasks and options DCS allows the group)
@@ -46,7 +49,7 @@ CALLSIGN_NAMES = ("Enfield", "Springfield", "Uzi", "Colt", "Dodge", "Ford", "Che
 WEAPON_AUTO = 1073741822   # "any suitable weapon" flag the Mission Editor writes for bombing tasks
 
 # DCS AI option ids/values (AI.Option.Air)
-OPT_ROE, ROE_WEAPON_FREE, ROE_WEAPON_HOLD = 0, 0, 4
+OPT_ROE, ROE_WEAPON_FREE, ROE_OPEN_FIRE, ROE_WEAPON_HOLD = 0, 0, 2, 4
 OPT_RTB_ON_BINGO = 6
 
 
@@ -114,11 +117,12 @@ def _wp_tasks(wp: Waypoint, orbit_s: float | None = None) -> list[dict]:
                                                 else p.get("duration_s", ORBIT_DEFAULT_S))}})]
     if wp.action == "CAS":
         return [_task(1, "EngageTargetsInZone", {
-            "point": pt, "zoneRadius": p.get("radius_m", 9_000), "priority": 0,
+            "point": pt, "zoneRadius": p.get("radius_m", ATTACK_RADIUS_M["CAS"]), "priority": 0,
             "targetTypes": ["Ground Units", "Helicopters", "Light armed ships"]})]
     if wp.action == "SEAD":
         return [_task(1, "EngageTargetsInZone", {
-            "point": pt, "zoneRadius": p.get("radius_m", 30_000), "priority": 0, "targetTypes": ["Air Defence"]})]
+            "point": pt, "zoneRadius": p.get("radius_m", ATTACK_RADIUS_M["SEAD"]), "priority": 0,
+            "targetTypes": ["Air Defence"]})]
     if wp.action == "BOMB":
         return [_task(1, "Bombing", {
             "point": pt, "weaponType": WEAPON_AUTO, "expend": "Auto", "attackQtyLimit": False,
@@ -138,7 +142,11 @@ def _point(wp: Waypoint, speed: float, orbit_s: float | None = None) -> dict:
 
 
 def _first_tasks(flight: Flight) -> list[dict]:
-    roe = ROE_WEAPON_HOLD if flight.mission.upper() in NON_COMBAT_MISSIONS else ROE_WEAPON_FREE
+    # Fighters are weapons free. Everything else fires only at what its tasks name (open fire):
+    # weapons free, Run 15's CAS lead left its attack to go after an SA-6 32 nm off its route.
+    mission = flight.mission.upper()
+    roe = (ROE_WEAPON_HOLD if mission in NON_COMBAT_MISSIONS else
+           ROE_WEAPON_FREE if mission in FIGHTER_MISSIONS else ROE_OPEN_FIRE)
     tasks = [_option(1, OPT_ROE, roe), _option(2, OPT_RTB_ON_BINGO, True)]
     if flight.mission.upper() in FIGHTER_MISSIONS:
         tasks.append(_task(3, "EngageTargets", {"targetTypes": ["Air"], "priority": 0,

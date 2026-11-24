@@ -197,6 +197,14 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         await self.wait_for(lambda: results == [{"exists": True}])
         await c.close()
 
+    async def test_close_with_clients_still_connected(self):
+        # DCS keeps its connections open; closing must not wait for it (Run 15: Ctrl-C hung).
+        m, h = FakeClient(Src.MISSION), FakeClient(Src.HOOKS)
+        await m.connect(self.bridge.port)
+        await h.connect(self.bridge.port, run_id="h-run")
+        await asyncio.wait_for(self.bridge.close(), TIMEOUT)
+        self.assertEqual(await asyncio.wait_for(m.reader.read(), TIMEOUT), b"")   # the client sees EOF
+
     async def test_mission_and_hooks_are_independent(self):
         m, h = FakeClient(Src.MISSION), FakeClient(Src.HOOKS)
         await m.connect(self.bridge.port, run_id="m-run")

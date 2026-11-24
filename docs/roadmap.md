@@ -47,7 +47,7 @@ In order of risk. Each is a short spike with a pass/fail question.
 
 In order. Items in brackets are only the part needed now; the rest comes later.
 
-1. **6** One campaign server, and the parts of **18** needed to run it (save on stop, status).
+1. **6** One campaign server, and the parts of **18** needed to run it (save on stop, status). **Built** ([server](server.md)); first DCS run pending.
 2. **5** Per-type cruise speed (small; do it while touching the flight model).
 3. **7** Theater data for Syria: the generated map layer, cleaned up for the first scenario's area, plus that scenario's authored layer.
 4. **8** Ground war: movement, abstract fights, captures, front line.
@@ -75,7 +75,7 @@ In order of value for the playable campaign, then risk.
 | P11 | Lasting damage | 15 | Can destroyed scenery, bridges and runways be put back at mission start (e.g. by explosions at saved positions) without side effects? |
 | P12 | CSAR | 30 | Can an ejected pilot become a ground unit, and can a pickup by helicopter be detected reliably? |
 | P13 | Loadouts | 26, munitions | Can the engine limit or set a player's weapons (warehouse stock, dynamic slots), or only advise? Map loadout pylons (CLSIDs) to warehouse weapon names. |
-| P14 | DCS's built-in browser | 4 | (The F-4E's Virtual Browser, the same Chromium, doesn't open under Proton: 2026-11-19.) Does the CEF window render under Proton, open in-game with a key, work in VR, and load the engine's page? |
+| P14 | DCS's built-in browser | 4 | (The F-4E's Virtual Browser, the same Chromium, doesn't open under Proton: 2026-11-19.) Does the CEF window render under Proton, open in-game with a key, work in VR, and load the engine's page? **Run 14l (2026-11-20): not under Proton.** The client script can open DCS's `WebViewWidget` and it fetches pages, but its renderer crashes on a Chromium check (CEF 106) as soon as it starts, so the window stays grey (the Start Here page too). The dxgui campaign window works instead. Not pursued: trying another Wine build would upgrade the shared DCS prefix. Decision: in-game UI = dxgui window; the full war map is a web page outside DCS. |
 | P15 | Helicopter operations | 31 | Do AI transport and troop drops work well enough; can players carry campaign cargo? |
 | P16 | Spoken AWACS calls | 36 | Can the server speak on SRS with text-to-speech? |
 | P17 | Target imagery | 29 | Can images be made automatically, or only descriptions? |

@@ -1,5 +1,13 @@
 # Campaign server settings. Distances in nautical miles, times in seconds.
 
+[server]
+host = "127.0.0.1"        # the bridge listens here; run the engine on the DCS server machine
+port = 7341               # must match the mission bridge and Hooks scripts
+save = "build/saves/campaign.json"   # loaded at startup, written while running and on stop
+autosave_s = 30           # save this often (real time) while anything changes
+status_s = 60             # print a status line this often (real time)
+slot_sides = [0, 2]       # sides players may take: 0 spectators, 1 red, 2 blue (PvE: blue only)
+
 [bubble]
 # Ordinary ground formations exist in DCS while a player is within these distances.
 # They spawn inside ground_spawn_nm and despawn only once every player is beyond

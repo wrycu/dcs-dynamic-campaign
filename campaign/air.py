@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from .flight_spawn import ORBIT_DEFAULT_S, Takeoff, build_flight_spawn, flight_number_hint
+from .flight_spawn import ATTACK_RADIUS_M, ORBIT_DEFAULT_S, Takeoff, build_flight_spawn, flight_number_hint
 from .model import CampaignState, Flight, FlightState, Pos, Side, SpawnState, StartMode
 from .protocol import PREFIX_FLIGHT, Hello, Op, as_list, group_name, parse_dcs_name
 
@@ -244,7 +244,8 @@ class AirSpawner:
         Near any upcoming waypoint, everything before it is passed (telemetry is sparse, so a
         waypoint can be skipped between reports). An ORBIT waypoint stays the next one until its
         time is up, measured on the campaign clock from when the flight first got there, so a
-        flight taken out of DCS mid-orbit comes back for the rest of it. A LAND waypoint is never
+        flight taken out of DCS mid-orbit comes back for the rest of it. An attack waypoint (CAS,
+        SEAD, BOMB) is never skipped: it is passed only by reaching it. A LAND waypoint is never
         passed by flying near it, only by landing: a flight overhead or in the pattern hasn't
         landed, and taken out of DCS there it must still fly to the field and land.
         """
@@ -252,6 +253,8 @@ class AirSpawner:
         for j in range(f.next_wp, len(f.waypoints)):
             wp = f.waypoints[j]
             if math.dist((f.pos.x, f.pos.y), (wp.pos.x, wp.pos.y)) > self.cfg.wp_reached_m:
+                if wp.action in ATTACK_RADIUS_M:
+                    break   # never skip an attack: a later point near the route doesn't mean it's done
                 continue
             if wp.action == "LAND":
                 f.next_wp, f.hold_until = j, None
