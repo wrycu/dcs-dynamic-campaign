@@ -1,6 +1,6 @@
 # Saves
 
-`campaign/persist.py` saves and loads the campaign. The [campaign server](server.md) uses it directly; `tools/demo_save.py` wires it into the demos.
+`campaign/persist.py` saves and loads the campaign. The [campaign server](server.md) uses it.
 
 ## What's in a save
 
@@ -44,9 +44,9 @@ One JSON file:
 - `--new` started over, and the previous save was kept.
 - An AI flight that was taxiing when the engine restarted carried on, landed and was recovered.
 
-## Demos
+## The server's save
 
-- `python3 -m tools.bubble_demo` and `python3 -m tools.air_demo` load `build/saves/bubble.json` and `build/saves/air.json` at startup.
-- While running, they save every 5 s if anything changed, and once more on Ctrl-C.
-- `--new` starts over. `--save PATH` picks another file, for example an older `bubble.json.2`.
-- `build/` is git-ignored, so saves stay local.
+- `python3 -m campaign.server` loads `build/saves/campaign.json` (`[server] save`) at startup.
+- While running, it saves every `autosave_s` (30 s) if anything changed, on mission connect and disconnect, and once more on Ctrl-C.
+- `--new` starts over. `--save PATH` picks another file, for example an older `campaign.json.2`.
+- `build/` is git-ignored, so saves stay local. The demos' old saves (`bubble.json`, `air.json`, `flight_bubble.json`) are no longer used.

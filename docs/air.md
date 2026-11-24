@@ -1,6 +1,6 @@
 # AI flights
 
-How a campaign `Flight` becomes a DCS group and back. The code is in `campaign/flight_spawn.py` (building the group table), `campaign/air.py` (`AirSpawner`, the lifecycle) and `campaign/payloads.py` (loadouts). `tools/air_demo.py` is the in-game test (Run 5 in `testing-in-dcs.md`).
+How a campaign `Flight` becomes a DCS group and back. The code is in `campaign/flight_spawn.py` (building the group table), `campaign/air.py` (`AirSpawner`, the lifecycle) and `campaign/payloads.py` (loadouts). The in-game test is the [campaign server](server.md)'s `khalkhalah` scenario (Run 15 in `testing-in-dcs.md`; earlier, Runs 5 and 7 with demos since retired).
 
 ## Building a flight
 
@@ -53,7 +53,7 @@ PLANNED --spawn--> TAXI --takeoff--> ENROUTE --all landed--> LANDED --all shut d
 
 ## Flight bubble
 
-`campaign/air_bubble.py`, in-game test `tools/flight_bubble_demo.py` (Run 7). Settings are in `[bubble]`: `air_spawn_nm` (60), `air_despawn_nm` (80), `air_min_dwell_s` (120) and `max_flights` (12).
+`campaign/air_bubble.py`, in-game test: Run 15 (earlier, Run 7). Settings are in `[bubble]`: `air_spawn_nm` (60), `air_despawn_nm` (80), `air_min_dwell_s` (120) and `max_flights` (12).
 
 - **In DCS near players only.**
   - An airborne flight is spawned with an air start, where the engine has it, once a player is within `air_spawn_nm`.
@@ -64,7 +64,7 @@ PLANNED --spawn--> TAXI --takeoff--> ENROUTE --all landed--> LANDED --all shut d
   - Otherwise it takes off without DCS, from its base, or from its first waypoint if it is off-map or air-started.
   - Either way, the aircraft leave the squadron at that moment.
 - **Without DCS:**
-  - Flights fly their route at cruise speed (220 m/s, about 430 kt) and hold at an ORBIT for its duration.
+  - Flights fly their route at their cruise speed and hold at an ORBIT for its duration. Cruise speeds are per aircraft type (`CRUISE_KT` in `campaign/catalog.py`, e.g. A-10C 300 kt, F-16C 480 kt; 430 kt for types not listed). A flight in a package flies at the package's slowest type, and a waypoint's `speed_ms` sets its own leg's speed. DCS routes use the same speeds, and orbits are flown at 80 % of cruise.
   - At LAND or EXIT they're home, and the aircraft return to the squadron.
 - **Campaign clock:** follows DCS model time from telemetry, so time acceleration speeds up the whole war and a paused mission stops it. A single jump is capped at 120 s. It is saved with the campaign.
 - **Orbits:**
@@ -87,5 +87,6 @@ PLANNED --spawn--> TAXI --takeoff--> ENROUTE --all landed--> LANDED --all shut d
 - **Weapons after a respawn.** `despawn_group` reports the remaining `ammo`, but a respawned flight gets its full loadout back. Mapping the remaining weapons back onto pylons needs a weapon → pylon catalog.
 - **Parking choice** is naive: the first free fighter-sized spots, with shelters first.
 - **Radio frequencies** are left to DCS defaults.
+- **AI attack dives.** In Run 15 an AI Hornet dove at 55° on armor, fired a Maverick at 2,800 ft above the ground, and flew into it. To try: an attack altitude floor (`AttackGroup` with `altitudeEnabled`), or a different weapon or attack type for Mavericks.
 - **Rules of engagement are a stopgap.** CAS, SEAD and strike flights use ROE open fire, so they engage only what their tasks name. Weapons free let Run 15's CAS lead leave its target for an SA-6 32 nm away. But open fire may also make them ignore pop-up threats and other obvious targets near their route. A better answer is probably weapons free with limits: a route corridor for targets of opportunity, a threat reaction, or ROE switched per leg (free near the target, open fire en route). This hasn't been checked in DCS yet.
 - **Munitions logistics.** AI ramp and runway starts take their weapons and drop tanks from the airbase warehouse. If a limited warehouse doesn't have them, the jets spawn with only the gun, silently (verified on DCS 2.9). The test mission keeps munitions unlimited. Tracking munitions would need a map from loadout pylons (CLSIDs) to warehouse weapon names. An empty *aircraft* stock is different: DCS creates no aircraft at all, and `spawn_group` fails.

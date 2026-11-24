@@ -145,6 +145,9 @@ class Waypoint:
     # None (fly through), "ORBIT", "CAS", "SEAD", "BOMB", "EXIT" (leave the map), "LAND".
     action: str | None = None
     params: dict = field(default_factory=dict)  # per action, e.g. {"duration_s": 1200, "radius_m": 9000}
+    # True airspeed on the leg to this point (m/s), e.g. slow for a CAS stack or fast for an ingress.
+    # None: the flight's cruise speed (see campaign.catalog.flight_cruise_ms).
+    speed_ms: float | None = None
 
 
 @dataclass

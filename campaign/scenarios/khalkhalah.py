@@ -54,6 +54,7 @@ class Khalkhalah(Scenario):
     name = "khalkhalah"
     theater_map = "Syria"
     magvar = 5.0      # Syria, near Khalkhalah
+    home = HOME
     announce = True   # a test scenario: show every flight and formation change in DCS
 
     def __init__(self) -> None:

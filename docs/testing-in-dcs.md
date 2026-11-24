@@ -62,6 +62,8 @@ Reading the results:
 | 4 warehouse | Real types accepted, `NOT_A_REAL_TYPE` rejected; the inventory dump shows the key format | Rejected real types need the naming the inventory dump uses. |
 | 5 scenery | The known tower id is `FOUND`, and the DEAD event's name matches | Use whichever field matched as `Feature.dcs_ref`. |
 
+> **Runs 3 and 5–8 used demos that are now retired** (`tools.bubble_demo`, `tools.air_demo`, `tools.flight_bubble_demo`; still in git history). Their scenario lives on as `python3 -m campaign.server --scenario khalkhalah` (Run 15), and ghosts as `--ghost`.
+
 ## Run 2: end-to-end bridge (`campaign-smoke.miz`)
 
 1. **Terminal A:** `python3 -m tools.smoke_server`.
@@ -851,3 +853,12 @@ python3 -m campaign.server
 - **Ctrl-C hung the server.** Since Python 3.12, `Server.wait_closed()` waits for every open connection, and DCS keeps its connections open. The server saved, stopped listening, and then waited forever. That also broke the mission restart: the restarted mission had nothing to connect to. Ctrl-C also killed `tee`, so the log ends at T+0:03:51. Fixed: connections are closed first; a second Ctrl-C quits at once; the server writes `build/logs/server.log` itself.
 - **A target left DCS while an AI flight was attacking it.** The engine follows a flight in DCS by the waypoints it comes near (within 9 km). Blue CAS's egress point was 3 nm from its ingress point, so the engine counted the attack as done before the flight reached the target. Nothing kept a target in DCS for an AI attacker anyway; only players did. Fixed: an attack waypoint is passed only by reaching it; enemy formations in an attack zone spawn when the attacking flight in DCS comes within their spawn distance, and stay until it leaves the attack behind. Blue CAS now egresses 8 nm west.
 - **Blue CAS's lead (Colt 2-1) went after the SA-6** (from your Tacview recording). You were orbiting across the SA-6's spawn and despawn distances, so it spawned and despawned five times, each time after the 90 s minimum. On its first spawn (T+6), Colt 2-1 left its route and flew to within 8 nm of the SA-6. The SA-6 left DCS at T+10:40, and Colt 2-1 turned back and fired its Mavericks at armor1 (T+14 to T+15). Colt 2-2 attacked armor1 all along. Nothing had tasked the lead against the SA-6: with ROE weapons free, the AI goes for targets of opportunity. Fixed, to check in DCS: flights other than fighters (CAS, SEAD, strike) now use ROE open fire, so they only engage what their tasks name; fighters stay weapons free, ferries weapons hold.
+
+### Second try (2026-11-23): passed, through step 8
+From `build/logs/server.log` and Tacview. The run ended at T+14, so Red Ferry leaving the map and the landings weren't seen this time; Blue Ferry's landing and recovery passed on the first try.
+- **Ctrl-C:** three clean stops (`saving and closing`, `saved`), each within a second.
+- **Engine restarts** (T+0:33 and T+12:21): `new_run=False`, mission and Hooks resumed their runs, and a kill that happened while the server was down (armor1's second BMP-2) was replayed and counted.
+- **Mission restart** (T+13:51): `new_run=True`; every formation and flight was taken back into the engine and respawned: armor1 with its 2 surviving vehicles, Blue CAS with 1 aircraft, all three flights in the air where the engine had them. The clock carried on.
+- **ROE open fire:** both Colt 2 jets flew straight to armor1; neither went for the SA-6, which was up from T+6:30 to T+10:51 while you were within 22 nm of it.
+- **The target stayed in DCS:** armor1 stayed spawned while you were up to 30 nm from it (beyond its 25 nm) with Blue CAS attacking. Blue CAS killed 6 of its 8 vehicles.
+- **Colt 2-2 flew into the ground** at T+10:22: a 55° dive from 9,500 ft, Maverick fired at 2,800 ft above the ground, no pull-out. Not shot down. A DCS AI attack-profile problem; logged in [air](air.md#not-done-yet).

@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from .catalog import flight_cruise_ms
 from .flight_spawn import ATTACK_RADIUS_M, ORBIT_DEFAULT_S, Takeoff, build_flight_spawn, flight_number_hint
 from .model import CampaignState, Flight, FlightState, Pos, Side, SpawnState, StartMode
 from .protocol import PREFIX_FLIGHT, Hello, Op, as_list, group_name, parse_dcs_name
@@ -116,7 +117,8 @@ class AirSpawner:
         if flight.hold_until is not None and flight.start is StartMode.AIR:
             orbit_left = max(0.0, flight.hold_until - self.state.clock)
         spec = build_flight_spawn(flight, sq.aircraft_type, sq.side, takeoff=takeoff, uncontrolled=uncontrolled,
-                                  number=number, orbit_left_s=orbit_left)
+                                  number=number, orbit_left_s=orbit_left,
+                                  speed_ms=flight_cruise_ms(self.state, flight))
         await self.call(Op.SPAWN_GROUP, spec.data)
         now = self.clock()
         if first_launch:

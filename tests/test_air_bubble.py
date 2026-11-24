@@ -3,6 +3,7 @@ import unittest
 from campaign.air import AirConfig, AirSpawner
 from campaign.air_bubble import AirBubble, fly
 from campaign.bubble import NM, BubbleConfig
+from campaign.catalog import cruise_ms
 from campaign.model import CampaignState, Flight, FlightState, Pos, Side, SpawnState, Squadron, StartMode, Waypoint
 from tests.test_air import TAKEOFF, FakeDCS
 
@@ -89,13 +90,14 @@ class AirBubbleTests(unittest.IsolatedAsyncioTestCase):
         self.players((0, 200 * NM), t=0)
         await self.bubble.tick()  # air start, virtual: at its first waypoint
         self.assertEqual((f.spawn, f.pos), (SpawnState.AGGREGATED, Pos(0, 0)))
-        self.players((0, 200 * NM), t=100)  # flies 22 km north
-        self.assertEqual(f.pos, Pos(22_000, 0))
-        self.players((22_000, 25 * NM), t=103)
+        self.players((0, 200 * NM), t=100)  # flies north at the MiG-29's cruise speed
+        x = 100 * cruise_ms("MiG-29A")
+        self.assertAlmostEqual(f.pos.x, x)
+        self.players((x, 25 * NM), t=103)
         plan = await self.bubble.tick()
         self.assertEqual(plan.spawn, ["f1"])
         unit = self.dcs.calls[-1][1]["group"]["units"][0]
-        self.assertAlmostEqual(unit["x"], 22_660)  # spawned where the engine had it
+        self.assertAlmostEqual(unit["x"], 103 * cruise_ms("MiG-29A"))  # spawned where the engine had it
         self.assertEqual(self.state.squadrons["sq"].aircraft_ready, 6)  # taken once, at launch
 
         self.air.on_telemetry(self.dcs.telemetry())  # the fake reports it at 0,0; good enough

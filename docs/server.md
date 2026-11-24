@@ -18,6 +18,7 @@ The log goes to the console and is appended to `build/logs/server.log`. Don't pi
 | `--save PATH` | Save file. Default `[server] save`. |
 | `--new` | Start the scenario over. |
 | `--port N` | Bridge port. Default `[server] port`. |
+| `--ghost BRG/NM\|AIRBASE` | Test aid: a ghost player the bubbles treat as real, at a magnetic bearing and range from the scenario's home airbase, or on an airbase. Repeat for more. Drawn as `GHOST n`; Status ignores it. |
 | `--log PATH` | Also append the log here. Default `build/logs/server.log`. |
 | `-v` | Debug logging. |
 

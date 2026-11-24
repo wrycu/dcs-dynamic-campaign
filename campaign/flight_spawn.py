@@ -23,13 +23,14 @@ import math
 import zlib
 from dataclasses import dataclass
 
-from .catalog import COUNTRY_FOR_SIDE
+from .catalog import COUNTRY_FOR_SIDE, DEFAULT_CRUISE_KT, KT, cruise_ms
 from .model import Flight, Pos, Side, StartMode, Waypoint
 from .payloads import dcs_payload
 from .protocol import PREFIX_FLIGHT, group_name, unit_name
 
 AIR_ENGAGE_M = 60_000      # fighters engage air targets this far from their route
-CRUISE_MS = 220.0          # default route speed (about 430 kt TAS)
+CRUISE_MS = DEFAULT_CRUISE_KT * KT   # route speed for types without one in catalog.CRUISE_KT
+ORBIT_SPEED = 0.8          # orbits are flown at this fraction of the cruise speed
 ORBIT_DEFAULT_S = 1200
 # Waypoint actions that attack the ground, and their default zone radius in metres (BOMB: the point).
 ATTACK_RADIUS_M = {"CAS": 9_000, "SEAD": 30_000, "BOMB": 2_000}
@@ -105,12 +106,12 @@ def _option(n: int, name: int, value) -> dict:
     return _task(n, "WrappedAction", {"action": {"id": "Option", "params": {"name": name, "value": value}}})
 
 
-def _wp_tasks(wp: Waypoint, orbit_s: float | None = None) -> list[dict]:
+def _wp_tasks(wp: Waypoint, cruise: float, orbit_s: float | None = None) -> list[dict]:
     p = wp.params
     pt = {"x": wp.pos.x, "y": wp.pos.y}
     if wp.action == "ORBIT":
         orbit = {"id": "Orbit", "params": {"pattern": "Circle", "point": pt, "altitude": wp.alt_m,
-                                           "speed": p.get("speed_ms", CRUISE_MS * 0.8)}}
+                                           "speed": p.get("speed_ms", cruise * ORBIT_SPEED)}}
         return [_task(1, "ControlledTask", {"task": orbit,
                                             "stopCondition": {"duration": round(
                                                 orbit_s if orbit_s is not None
@@ -130,12 +131,12 @@ def _wp_tasks(wp: Waypoint, orbit_s: float | None = None) -> list[dict]:
     return []
 
 
-def _point(wp: Waypoint, speed: float, orbit_s: float | None = None) -> dict:
-    pt = {"x": wp.pos.x, "y": wp.pos.y, "alt": wp.alt_m, "alt_type": "BARO", "speed": speed,
+def _point(wp: Waypoint, cruise: float, orbit_s: float | None = None) -> dict:
+    pt = {"x": wp.pos.x, "y": wp.pos.y, "alt": wp.alt_m, "alt_type": "BARO", "speed": wp.speed_ms or cruise,
           "speed_locked": True, "type": "Turning Point", "action": "Turning Point"}
     if wp.action == "LAND":
         pt.update(type="Land", action="Landing", airdromeId=wp.params["airdrome_id"], alt_type="RADIO")
-    tasks = _wp_tasks(wp, orbit_s)
+    tasks = _wp_tasks(wp, cruise, orbit_s)
     if tasks:
         pt["task"] = {"id": "ComboTask", "params": {"tasks": tasks}}
     return pt
@@ -156,7 +157,7 @@ def _first_tasks(flight: Flight) -> list[dict]:
 
 def build_flight_spawn(flight: Flight, aircraft_type: str, side: Side, *,
                        takeoff: Takeoff | None = None, uncontrolled: bool = False,
-                       speed_ms: float = CRUISE_MS, number: int | None = None,
+                       speed_ms: float | None = None, number: int | None = None,
                        orbit_left_s: float | None = None) -> FlightSpawn:
     """DCS spawn for ``flight``.
 
@@ -167,6 +168,7 @@ def build_flight_spawn(flight: Flight, aircraft_type: str, side: Side, *,
     by default it comes from the flight id. ``orbit_left_s`` shortens an ORBIT the flight is
     already in (its next waypoint) to what's left of it.
     """
+    speed_ms = speed_ms or cruise_ms(aircraft_type)
     if flight.aircraft < 1:
         raise ValueError(f"flight {flight.id} has no aircraft")
     route = flight.waypoints[flight.next_wp:]

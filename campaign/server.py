@@ -40,6 +40,7 @@ from .air_bubble import AIRBORNE, MAX_STEP_S, AirBubble
 from .bridge import Bridge, BridgeError, Connection
 from .bubble import NM, attack_targets, strength
 from .flight_spawn import Takeoff
+from .ghosts import Ghosts
 from .model import CampaignState, Flight, FlightState, GroundUnit, Pos, SpawnState, Squadron
 from .persist import Autosave, SaveError, Snapshot, load
 from .protocol import Envelope, Hello, Src, as_list
@@ -86,6 +87,7 @@ class Scenario:
     name = "empty"
     theater_map = ""
     magvar = 0.0       # magnetic variation on the map, degrees east: bearings shown to pilots are magnetic
+    home = ""          # the airbase ghost bearings (--ghost BRG/NM) are measured from
     announce = False   # also show flight and formation changes as DCS messages (test scenarios)
 
     def new_state(self) -> CampaignState:
@@ -138,9 +140,11 @@ class WarClock:
 
 class Engine:
     def __init__(self, settings: Settings, scenario: Scenario, snap: Snapshot | None = None, *,
-                 save_path: Path | None = None, mission_call=None, hooks_call=None) -> None:
+                 save_path: Path | None = None, mission_call=None, hooks_call=None,
+                 ghosts: list[str] | None = None) -> None:
         self.settings = settings
         self.scenario = scenario
+        self.ghosts = Ghosts(ghosts or [])   # test aid: fixed points the bubbles treat as players
         self.state: CampaignState = snap.state if snap else scenario.new_state()
         self.bridge: Bridge | None = None
         self._mission_call = mission_call
@@ -261,6 +265,10 @@ class Engine:
                 self.ready = True
                 log.info("scenario %s set up: %s", self.scenario.name, self.summary())
             await self.scenario.on_mission(self, new_run)
+            if self.ghosts:
+                for line in self.ghosts.place(self.airbase_pos, self.scenario.home, self.scenario.magvar):
+                    log.info(line)
+                await self.ghosts.draw(self.mission_call)
             if new_run:
                 await self.mission_call("menu", {"audience": "all", "items": [{"label": "Status", "key": "status"}]})
         except (BridgeError, asyncio.TimeoutError) as e:
@@ -285,6 +293,7 @@ class Engine:
         self.players = [p for p in as_list(data.get("players")) if isinstance(p, dict)]
         if t is not None:
             self.model_t = float(t)
+        data = self.ghosts.inject(data)   # the bubbles see ghosts as players; status doesn't
         self.ground.on_telemetry(data)
         for f in self.air.on_telemetry(data):
             self.exits[f.id] = f
@@ -475,6 +484,9 @@ def main() -> None:
     ap.add_argument("--new", action="store_true",
                     help="start the scenario over; the old save is kept as <save>.1 once this one saves")
     ap.add_argument("--port", type=int, help="bridge port (default: [server] port)")
+    ap.add_argument("--ghost", action="append", default=[], metavar="BRG/NM|AIRBASE",
+                    help="test aid: a ghost player the bubbles treat as real, at a magnetic bearing/range (nm) from "
+                         "the scenario's home airbase (e.g. 090/100) or on an airbase by name; repeat for more")
     ap.add_argument("--log", type=Path, default=DEFAULT_LOG,
                     help=f"also append the log to this file (default {DEFAULT_LOG}); no need for tee")
     ap.add_argument("-v", "--verbose", action="store_true", help="debug logging")
@@ -510,7 +522,10 @@ def main() -> None:
                          f"(the old save is kept), or --save to pick another file")
     scenario = load_scenario(name)
     log.info("%s %s (scenario %s)", "loaded" if snap else "new campaign:", save_path, name)
-    engine = Engine(settings, scenario, snap, save_path=save_path)
+    try:
+        engine = Engine(settings, scenario, snap, save_path=save_path, ghosts=args.ghost)
+    except ValueError as e:
+        raise SystemExit(str(e))
 
     async def run() -> None:
         stop = asyncio.Event()

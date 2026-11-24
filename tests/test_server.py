@@ -243,6 +243,16 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         await self.report(e, 3, players=self.SOUTH)
         self.assertIs(e.state.ground_units["armor1"].spawn, SpawnState.SPAWNED)
 
+    async def test_ghosts_count_for_the_bubbles_only(self):
+        self.dcs = FakeMission()
+        e = Engine(settings(), TestScenario(), mission_call=self.dcs.call, ghosts=["000/13"])   # on armor1
+        await self.connect(e)
+        await self.report(e, 0, players=self.SOUTH)
+        self.assertIs(e.state.ground_units["armor1"].spawn, SpawnState.SPAWNED)
+        self.assertIs(e.state.ground_units["sa6"].spawn, SpawnState.AGGREGATED)   # 34 nm from the ghost
+        self.assertEqual(len(e.players), 1)              # Status still sees only the real player
+        self.assertIn(("draw", "GHOST 1 (000/13)"), [(op, d.get("text")) for op, d in self.dcs.calls])
+
     async def test_hooks_get_slot_rules(self):
         e = self.make()
 

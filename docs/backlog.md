@@ -113,10 +113,13 @@ same value. Instead:
   strike ingress), used both by `fly()` and in the DCS route;
 - a package moves at the speed of its slowest flight, so its flights still meet their times on
   target.
+- **Done (2026-11-23)**, except cruise altitude, which is left to whoever writes the waypoints
+  (the planner): `CRUISE_KT` and `flight_cruise_ms` in `campaign/catalog.py`, `Waypoint.speed_ms`
+  for a leg, used by `fly()` and the DCS route alike ([air](air.md)).
 
 ## 6. One campaign server
 
-Today each part runs in its own demo (`bubble_demo`, `air_demo`, `flight_bubble_demo`). A real
+Before this, each part ran in its own demo (`bubble_demo`, `air_demo`, `flight_bubble_demo`). A real
 session needs one engine process that runs everything together: bridge and Hooks connections,
 ground and flight bubbles, the planner, the war clock, autosave, and later the overview UI.
 Everything below plugs into it, so it comes first.
@@ -129,8 +132,9 @@ Everything below plugs into it, so it comes first.
 - **Built (2026-11-20):** `campaign/server.py` ([server](server.md)), with `[server]` settings, plug-in
   points for the war simulation and the planner, scenarios in `campaign/scenarios/` (the first,
   `khalkhalah`, is the bubble and flight demos together), save on stop and a status line and
-  F10 status. Checked locally against a fake mission; not yet run in DCS. The demos stay until it
-  has been.
+  F10 status. Run 15 passed in DCS (2026-11-23): clean stops, engine and mission restarts,
+  AI targets kept in DCS. The demos are retired (2026-11-23); ghost players moved into the
+  server (`--ghost`).
 
 ## 7. Theater data
 

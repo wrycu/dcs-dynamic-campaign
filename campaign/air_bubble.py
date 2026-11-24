@@ -7,7 +7,7 @@ Rules:
 - A flight due to take off (``takeoff_time`` reached on the campaign clock) starts in DCS on the
   ramp or runway if a player is within ``air_spawn`` of its base; otherwise it takes off without
   DCS. Flights with an AIR start, or no base, begin at their first waypoint.
-- Flights that aren't in DCS fly their route at ``CRUISE_MS``, orbit for the ORBIT waypoint's
+- Flights that aren't in DCS fly their route at their cruise speed (``catalog.flight_cruise_ms``), orbit for the ORBIT waypoint's
   duration, and are home when they reach LAND or EXIT.
 - Flights on the ground in DCS (taxiing, landed) are left to ``AirSpawner``: it recovers them.
 - At most ``max_flights`` campaign flights are in DCS; the closest to a player spawn first.
@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable
 
 from .air import AirSpawner
 from .bubble import BubbleConfig, Observer, nearest, observer_from_telemetry
+from .catalog import flight_cruise_ms
 from .flight_spawn import CRUISE_MS, ORBIT_DEFAULT_S, Takeoff
 from .model import CampaignState, Flight, FlightState, Pos, SpawnState, Squadron, StartMode
 from .protocol import PREFIX_FLIGHT, as_list, parse_dcs_name
@@ -36,8 +37,9 @@ FAIL_BACKOFF_S = 60.0
 AIRBORNE = (FlightState.ENROUTE, FlightState.ON_STATION, FlightState.EGRESS)
 
 
-def fly(f: Flight, t0: float, t1: float, speed: float = CRUISE_MS) -> str | None:
-    """Move an aggregated flight along its route from campaign time ``t0`` to ``t1``.
+def fly(f: Flight, t0: float, t1: float, cruise: float = CRUISE_MS) -> str | None:
+    """Move an aggregated flight along its route from campaign time ``t0`` to ``t1``, at ``cruise``
+    (m/s) or the leg's own speed (``Waypoint.speed_ms``).
 
     Returns "LAND" or "EXIT" when the flight reaches such a waypoint (it's home), else None.
     """
@@ -57,6 +59,7 @@ def fly(f: Flight, t0: float, t1: float, speed: float = CRUISE_MS) -> str | None
         dist = math.hypot(dx, dy)
         if dist > 0:
             f.hdg = math.degrees(math.atan2(dy, dx)) % 360
+        speed = wp.speed_ms or cruise
         f.speed_ms = speed
         reach = speed * (t1 - t)
         if reach < dist:
@@ -144,7 +147,7 @@ class AirBubble:
         self.state.clock = t1 = t0 + dt
         for f in list(self.state.flights.values()):
             if f.spawn is SpawnState.AGGREGATED and f.state in AIRBORNE and f.aircraft > 0:
-                arrived = fly(f, t0, t1)
+                arrived = fly(f, t0, t1, flight_cruise_ms(self.state, f))
                 if arrived:
                     self.air.arrive_aggregated(f, arrived)
 
