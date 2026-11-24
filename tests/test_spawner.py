@@ -18,6 +18,7 @@ class FakeDCS:
         self.groups: dict[str, list[dict]] = {}
         self.calls: list[tuple[str, dict]] = []
         self.fail: Exception | None = None
+        self.clear = None   # clear_spots: points -> spots; None: every point is clear
 
     async def call(self, op, data):
         self.calls.append((op, data))
@@ -38,6 +39,9 @@ class FakeDCS:
                 survivors[u["type"]] = survivors.get(u["type"], 0) + 1
             return {"survivors": survivors or {}, "alive": [u["name"] for u in units],
                     "pos": {"x": units[0]["x"], "y": units[0]["y"]} if units else None}
+        if op == "query" and data["what"] == "clear_spots":
+            pts = data["points"]
+            return {"spots": self.clear(pts) if self.clear else list(pts)}
         raise AssertionError(op)
 
     def kill(self, group, index):
@@ -170,6 +174,60 @@ class SpawnerTests(unittest.IsolatedAsyncioTestCase):
         a = self.state.ground_units["a"]
         self.assertEqual((a.pos.x, a.pos.y), (6_000, 1_000))
 
+    async def test_sited_once_before_first_spawn(self):
+        self.dcs.clear = lambda pts: [{"x": p["x"] + 100, "y": p["y"]} for p in pts]
+        await self.step((0, 0))
+        a = self.state.ground_units["a"]
+        self.assertTrue(a.sited)
+        self.assertEqual(len(a.spots), 4)
+        q = [d for op, d in self.dcs.calls if op == "query"]
+        self.assertEqual(len(q), 1)
+        want = q[0]["points"]
+        got = [(u["x"], u["y"]) for u in self.dcs.groups["gu:a"]]
+        self.assertEqual(got, [(round(p["x"] + 100, 1), round(p["y"], 1)) for p in want])
+        # Despawn and respawn on the same spots, without asking again.
+        self.now = 100
+        await self.step((-100_000, 0))
+        self.now = 200
+        await self.step((0, 0))
+        self.assertEqual(len([1 for op, _ in self.dcs.calls if op == "query"]), 1)
+        self.assertEqual([(u["x"], u["y"]) for u in self.dcs.groups["gu:a"]], got)
+
+    async def test_small_drift_keeps_the_spots_a_move_resites(self):
+        self.dcs.clear = lambda pts: [{"x": p["x"] + 300, "y": p["y"]} for p in pts]
+        await self.step((0, 0))
+        a = self.state.ground_units["a"]
+        lead = self.dcs.groups["gu:a"][0]
+        self.sp.on_telemetry(self.dcs.telemetry([(0, 0)]))   # the lead vehicle, on its spot
+        self.assertTrue(a.sited)
+        lead.update(x=lead["x"] + 30)
+        self.sp.on_telemetry(self.dcs.telemetry([(0, 0)]))
+        self.assertTrue(a.sited)
+        lead.update(x=9_000, y=1_000)
+        self.sp.on_telemetry(self.dcs.telemetry([(0, 0)]))
+        self.assertFalse(a.sited)
+        self.assertEqual((a.pos.x, a.pos.y), (9_000, 1_000))
+        self.assertEqual(a.spots, [])
+
+    async def test_vehicles_without_clear_ground_keep_their_layout_spot(self):
+        self.dcs.clear = lambda pts: [None] + [{"x": p["x"], "y": p["y"] + 50} for p in pts[1:]]
+        await self.step((0, 0))
+        a = self.state.ground_units["a"]
+        self.assertIs(a.spawn, SpawnState.SPAWNED)
+        want = [d for op, d in self.dcs.calls if op == "query"][0]["points"]
+        self.assertEqual((a.spots[0].x, a.spots[0].y), (want[0]["x"], want[0]["y"]))
+        self.assertEqual(a.spots[1].y, want[1]["y"] + 50)
+
+    async def test_losses_use_the_first_spots(self):
+        await self.step((0, 0))
+        a = self.state.ground_units["a"]
+        self.sp.on_event(self.dcs.kill("gu:a", 4))
+        self.now = 100
+        await self.step((-100_000, 0))
+        self.now = 200
+        await self.step((0, 0))
+        self.assertEqual([(u["x"], u["y"]) for u in self.dcs.groups["gu:a"]],
+                         [(round(p.x, 1), round(p.y, 1)) for p in a.spots[:3]])
 
 if __name__ == "__main__":
     unittest.main()

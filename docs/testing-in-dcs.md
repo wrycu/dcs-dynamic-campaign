@@ -862,3 +862,83 @@ From `build/logs/server.log` and Tacview. The run ended at T+14, so Red Ferry le
 - **ROE open fire:** both Colt 2 jets flew straight to armor1; neither went for the SA-6, which was up from T+6:30 to T+10:51 while you were within 22 nm of it.
 - **The target stayed in DCS:** armor1 stayed spawned while you were up to 30 nm from it (beyond its 25 nm) with Blue CAS attacking. Blue CAS killed 6 of its 8 vehicles.
 - **Colt 2-2 flew into the ground** at T+10:22: a 55° dive from 9,500 ft, Maverick fired at 2,800 ft above the ground, no pull-out. Not shot down. A DCS AI attack-profile problem; logged in [air](air.md#not-done-yet).
+
+## Run 16: build the Syria map layer (`tools.extract_theater`), backlog item 7
+Single player, about 10 minutes. Builds `data/theaters/syria/map.json` from DCS: airbases, towns, military sites, bridges and road links within 100 nm of Khalkhalah ([theater](theater.md)). It's a one-off extraction, so stutters are fine.
+
+1. In the repo: `python3 -m tools.extract_theater`. It prints `listening on 127.0.0.1:7341`.
+2. In DCS, start `campaign-dev/campaign-smoke.miz` and take the jet. Keep DCS focused until the terminal prints `WROTE` and DCS shows "Map layer: done." (a few minutes).
+3. Exit the mission.
+
+### What to send back
+- Tell me it's done. I'll read the terminal output you paste (or it's enough that `WROTE` appeared), `map.json` and the picture, `build/theater/syria-map.png`. Have a look at the picture yourself: are the towns real towns, and do the links look like the roads you'd drive?
+
+### Results (2026-11-23): passed
+`map.json` came out with 31 airbases, 60 towns, 26 military sites and 75 bridges within 100 nm of Khalkhalah, and 136 links, 6 of them without a road route (all touching Zarqa, Al Qusayr or Shayrat airbases: their nearest road point is probably on a road that doesn't join the network). The links follow the real road network; Damascus is one town; the landmarks are gone. Place names with stray symbols (`SAA 171th Brigade%`) are now cleaned up.
+
+## Run 17: the whole map, with a scenery survey (`tools.extract_theater` again)
+Run 16 only covered 100 nm around Khalkhalah and the 60 largest towns there. This run covers the whole map (Turkey to the Negev, Cyprus to H3), every town with at least 800 buildings, and airfields DCS reports no runways for (At Tanf, Kharab Ishk). Its scenery search also counts every scenery type and keeps the positions of anything that looks like infrastructure, for the next step. **Expect about 30 minutes**; progress lines show how far it is. If it's interrupted, run it again: what DCS already answered is kept.
+
+1. `python3 -m tools.extract_theater`
+2. Start `campaign-dev/campaign-smoke.miz`, take the jet, keep DCS focused and unpaused until `WROTE` (the bridge only answers while the mission runs).
+3. Tell me it's done; I'll read `map.json`, `build/theater/syria-map.png` and `build/theater/syria-scenery.json`.
+
+### Results (2026-11-24): passed
+The whole map in about 15 minutes: 81 airbases (every one labelled on the F10 map, plus Ercan, Lakatamia, Nicosia and Kedem), 283 towns, 30 military sites, 345 bridges and 446 links (14 without a road route: the sea to Cyprus, Zarqa, Kahramanmaras). The survey found 144 infrastructure-looking scenery types; the rules now make 217 sites of them (refineries, power plants, substations, fuel depots, dams, cement works and industrial areas), and Natural Earth adds borders, rivers and lakes. An offline rebuild takes 2 s.
+
+## Run 18: water (`tools.extract_theater` once more)
+Same steps as Run 17. Everything else comes from the cache; this run only asks DCS for its surface type on a 1 km grid over the whole map (about 760,000 points in 22 queries, a short stutter each). It writes `data/theaters/syria/water.json`, and the picture then shows the sea and lakes as DCS has them.
+
+### Results (2026-11-24): passed
+873 × 873 cells of 1 km, 26 % water: the Mediterranean coast (matching the F10 map), Lake Assad, the Sea of Galilee, the Dead Sea, the Atatürk reservoir, and small reservoirs inland. `water.json` is 20 KB. The first picture was drawn before `water.json` was written; fixed.
+
+## Run 19: Southern Syria on the campaign server (`campaign.server --scenario southern_syria`)
+Single player, FA-18C, about 15 minutes. The first run of a scenario built from the map layer: do its formations spawn where the scenario puts them, and do the Syrian SAM types (SA-2, SA-3, SA-11, SA-8, EWR) spawn and work? The smoke mission starts you 4 nm south of Khalkhalah, which is a red airbase inside the IADS, so **turn on Options > Gameplay > Immortal** (single player only) for this run.
+
+1. From the repo: `python3 -m campaign.server --new --scenario southern_syria --ghost 331/28`
+   The ghost sits on Damascus (331°M, 28 nm from Khalkhalah), so the Damascus SAM belt spawns although you're nowhere near.
+2. Start `campaign-dev/campaign-smoke.miz`. Expect the message `Campaign: Southern Syria. Coalition holds 120 objectives, Syria 140.` and the `GHOST 1` label over Damascus.
+3. Within a minute the terminal lists `GROUND ... spawned` lines: around you (Khalkhalah's SA-8 and AAA, the SyADF 159th Regiment's SA-3 and SA-6 6 nm away), and around Damascus (SA-2s, SA-3s, the SA-11). The bubble caps DCS at 300 vehicles, so not everything near Damascus will fit; that's expected.
+4. Open the F10 map: are the SAM sites spread out around their sites (not stacked, not in water), and do they look complete (launchers plus radars)?
+5. Fly toward Damascus (about 331°M) at 20,000 ft for a few minutes: your RWR should light up with SA-2, SA-3, SA-6, SA-11 and SA-8 radars, and with Immortal on, missiles may come at you; that's the point.
+6. F10 > Other > Campaign > Status: the squadrons, and the formations in DCS with bearing and range.
+7. Exit the mission, then Ctrl-C the server.
+
+### What to send back
+Tell me when it's done; I'll read `build/logs/server.log`. Anything that failed to spawn, sat in a strange place, or didn't fire.
+
+### Results (2026-11-24)
+- The scenario loaded, the message showed, and the ghost was placed on Damascus. In 1.5 minutes 44 formations spawned, which hit the 300-vehicle cap: the Damascus SA-2s (2 of 3, the third didn't fit under the cap), SA-3s and SA-11, the 159th Regiment's SA-3 and SA-6, the Shahba SA-2, SA-8s, AAA, the Shebaa EWR and the SAA brigades. No spawn failures.
+- Nothing spawned in water, **but formations in towns spawned inside buildings** (an SA-2 launcher and a P-19 radar among houses). The map layer knows where towns are, not where their buildings stand. Fixed: before its first spawn, a formation moves to the nearest clear ground (Run 20).
+
+## Run 20: formations on clear ground
+Single player, FA-18C, about 10 minutes. Before a formation first spawns, the engine asks DCS for the nearest spot with room for its layout: no buildings, statics or units in it, no water or runway under it, and not steep. It searches up to 3 km away. The formation stays at that spot from then on. The search runs in the mission, so how long it takes matters: watch for a stutter when the first formations spawn. Immortal on again.
+
+1. From the repo: `python3 -m campaign.server --new --scenario southern_syria --ghost 331/28`
+2. Start `campaign-dev/campaign-smoke.miz`. The terminal now shows `sited <formation> <n> m from its placement (clear ground)` before most town formations spawn. A `no clear ground within 3000 m` warning would mean a site that couldn't be fixed.
+3. Did the first seconds stutter (the searches)? A short hitch is fine; a freeze of several seconds is not.
+4. F10 map, then F11/external view on a few: `Damascus defence`, `Mezzeh air defence`, the Damascus SA-2s and SA-3s, `Khalkhalah air defence` (it was at the airbase's centre: now not on a runway). Are they all on open ground, not in or touching buildings?
+5. Exit the mission, then Ctrl-C the server. Then do steps 1 and 2 again **without** `--new` (the campaign loads from the save): they should spawn at the same spots, with no `sited` lines.
+
+### What to send back
+Tell me when it's done, with a screenshot of anything still inside a building and whether there was a stutter. I'll read `build/logs/server.log`.
+
+### Results (2026-11-24)
+- Nothing in buildings any more, and the formations came back to the same spots after a restart.
+- **But nothing stayed in the city proper.** The group needed a circle with room for its whole layout: 350 m across for a SAM or AAA site. A city has no such hole, so city defences moved 1–1.8 km out to the edge, and the SyADF 159th Regiment's SA-3 moved off its own revetments. Fixed: each vehicle now looks for clear ground by itself (Run 21).
+- One vehicle stood in an orchard. DCS has no scripting query for trees, so siting can't see them. A vehicle under trees can still drive and shoot.
+
+## Run 21: each vehicle on clear ground
+Single player, FA-18C, about 10 minutes, Immortal on. Siting works per vehicle now. Each vehicle of a formation's layout moves to the nearest spot within 1 km that has nothing within 20 m: no building, static or unit, no water or runway under it, not steep, and no other vehicle's spot within 15 m. City defences should stay in town, in streets, squares and lots.
+
+1. From the repo: `python3 -m campaign.server --new --scenario southern_syria --ghost 331/28`
+2. Start `campaign-dev/campaign-smoke.miz`. The terminal shows `sited <formation>: <n> vehicles, moved up to <m> m` lines. A `found no clear ground` warning means some vehicles stayed where the layout put them.
+3. Was there a stutter at the start? There are more searches now, though each is smaller.
+4. F10 map, then F11/external view: `Damascus defence`, `Mezzeh air defence`, `Harasta defence`, the Damascus SA-2s and SA-3s. Are they in town now, with no vehicle inside or touching a building?
+5. Exit, Ctrl-C the server, then steps 1 and 2 again **without** `--new`: same spots, no `sited` lines.
+
+### What to send back
+Tell me when it's done, with screenshots of anything inside a building or anything that looks wrong for a city. I'll read `build/logs/server.log`.
+
+### Results (2026-11-24)
+Passed. 44 formations were sited in their first 30 s with no stutter reported. Each formation's farthest-moved vehicle went a median of 50 m and at most 500 m, and every vehicle found clear ground. City defences stayed in town. One SA-13 overlapped a roadside fence: siting doesn't see fences and walls, just as it doesn't see trees (backlog: minor improvements).

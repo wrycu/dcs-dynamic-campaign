@@ -1,0 +1,17 @@
+# Hand clean-up of the Syria map layer. Applied every time tools/extract_theater.py builds
+# map.json, so it survives rebuilds. After editing, rebuild without DCS:
+#     python3 -m tools.extract_theater --offline
+# and look at build/theater/syria-map.png. See docs/theater.md.
+#
+# Objective ids come from names: ab_<airbase>, town_<town>, mil_<military site>, br_<bridge object id>.
+# They're in map.json.
+
+[objectives]
+# rename = { town_qura_al_assad = "Qura al-Assad" }
+# drop = ["mil_army_vehicle_training_ground"]     # not an objective
+# keep = ["town_shahba"]                            # a town to include although it isn't among the largest
+# add = [ { id = "depot_south", name = "Southern depot", type = "DEPOT", x = -230000.0, y = 60000.0, priority = 2 } ]
+
+[links]
+# drop = [["town_a", "town_b"]]
+# add = [["ab_khalkhalah", "town_shahba"]]

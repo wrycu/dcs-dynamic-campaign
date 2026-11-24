@@ -41,7 +41,7 @@ from .bridge import Bridge, BridgeError, Connection
 from .bubble import NM, attack_targets, strength
 from .flight_spawn import Takeoff
 from .ghosts import Ghosts
-from .model import CampaignState, Flight, FlightState, GroundUnit, Pos, SpawnState, Squadron
+from .model import CampaignState, Flight, FlightState, GroundUnit, Pos, SpawnState, Squadron, Theater
 from .persist import Autosave, SaveError, Snapshot, load
 from .protocol import Envelope, Hello, Src, as_list
 from .settings import Settings, SettingsError, load_settings
@@ -88,6 +88,7 @@ class Scenario:
     theater_map = ""
     magvar = 0.0       # magnetic variation on the map, degrees east: bearings shown to pilots are magnetic
     home = ""          # the airbase ghost bearings (--ghost BRG/NM) are measured from
+    theater: Theater | None = None   # the map layer, if the scenario uses one (squadron bases are objective ids)
     announce = False   # also show flight and formation changes as DCS messages (test scenarios)
 
     def new_state(self) -> CampaignState:
@@ -217,13 +218,18 @@ class Engine:
         ab = self.airbases.get(name)
         return Pos(ab["pos"]["x"], ab["pos"]["y"]) if ab else None
 
+    def dcs_airbase(self, base_id: str) -> str:
+        """The DCS airbase name for a squadron's base: an objective id of the scenario's map layer, or
+        (scenarios without one) the DCS name itself. Anything else (e.g. "offmap") has no airbase."""
+        th = self.scenario.theater
+        o = th.objectives.get(base_id) if th else None
+        return o.dcs_airbase if o and o.dcs_airbase else base_id
+
     def base_pos(self, sq: Squadron) -> Pos | None:
-        # Until the theater (item 7) maps objectives to airbases, a squadron's base_id is the DCS
-        # airbase name; anything else (e.g. "offmap") has no position.
-        return self.airbase_pos(sq.base_id)
+        return self.airbase_pos(self.dcs_airbase(sq.base_id))
 
     async def takeoff_for(self, f: Flight) -> Takeoff:
-        name = self.state.squadrons[f.squadron_id].base_id
+        name = self.dcs_airbase(self.state.squadrons[f.squadron_id].base_id)
         ab = self.airbases.get(name)
         if ab is None:
             raise ValueError(f"no airbase {name!r} in DCS")
@@ -429,7 +435,7 @@ class Engine:
     def status_text(self) -> str:
         """Bearings and ranges are from the first player (magnetic, nm)."""
         st, cfg = self.state, self.settings.bubble
-        lines = [f"CAMPAIGN {self.scenario.name} at {self.clock_text()}: {self.summary()}",
+        lines = [f"CAMPAIGN {self.scenario.name}: {self.summary()}",
                  f"Flights spawn within {cfg.air_spawn / NM:.0f} nm, leave DCS beyond {cfg.air_despawn / NM:.0f} nm; "
                  f"formations spawn within {cfg.ground_spawn / NM:.0f} nm (SAMs further)."]
         for f in st.flights.values():
@@ -442,9 +448,13 @@ class Engine:
                      if f.hold_until is not None and f.state in AIRBORNE else "")
             pos = f" {self.bra(f.pos)}{alt}" if f.state in AIRBORNE or f.spawn is SpawnState.SPAWNED else ""
             lines.append(f"{f.callsign}: {f.aircraft}x {f.mission} {f.state.name.lower()} {where}{pos}{orbit}")
-        for u in st.ground_units.values():
+        units = list(st.ground_units.values())
+        shown = units if len(units) <= 15 else [u for u in units if u.spawn is SpawnState.SPAWNED]
+        for u in shown:
             lines.append(f"{u.name}: {strength(u)} veh {'[DCS]' if u.spawn is SpawnState.SPAWNED else '[engine]'} "
                          f"{self.bra(u.pos)}")
+        if len(shown) < len(units):
+            lines.append(f"(and {len(units) - len(shown)} formations not in DCS)")
         for sq in st.squadrons.values():
             lines.append(f"{sq.name}: {sq.aircraft_ready} ready")
         return "\n".join(lines)

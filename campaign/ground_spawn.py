@@ -1,8 +1,9 @@
 """Turn an aggregated GroundUnit into a DCS group table for ``spawn_group``.
 
 The layout is deterministic per formation id, so a unit that despawns and respawns in the
-same place looks the same. Positions are not checked against terrain; formations should be
-placed on land by whoever moves them (theater authoring, the ground war).
+same place looks the same. Before a formation's first spawn the spawner moves each vehicle of
+this layout to clear ground nearby (the mission's ``clear_spots`` query, see spawner.py) and keeps
+the spots in ``GroundUnit.spots``; from then on vehicles spawn on those spots.
 """
 from __future__ import annotations
 
@@ -75,13 +76,18 @@ def build_ground_spawn(unit: GroundUnit, heading_deg: float | None = None) -> Gr
     is_sam = unit.role in (GroundRole.SAM, GroundRole.AAA)
     offsets = _sam(types, rng) if is_sam else _grid(len(types), rng)
     cos_h, sin_h = math.cos(hdg), math.sin(hdg)
+    # Sited spots, if they cover every vehicle (after losses the first ones are used).
+    spots = unit.spots if unit.sited and len(unit.spots) >= len(types) else []
 
     units, unit_types = [], {}
     for i, (t, (fwd, right)) in enumerate(zip(types, offsets), start=1):
         name = unit_name(PREFIX_GROUND, unit.id, i)
-        # Rotate (forward, right) by the heading: forward is north (+x), right is east (+y).
-        x = unit.pos.x + fwd * cos_h - right * sin_h
-        y = unit.pos.y + fwd * sin_h + right * cos_h
+        if i <= len(spots):
+            x, y = spots[i - 1].x, spots[i - 1].y
+        else:
+            # Rotate (forward, right) by the heading: forward is north (+x), right is east (+y).
+            x = unit.pos.x + fwd * cos_h - right * sin_h
+            y = unit.pos.y + fwd * sin_h + right * cos_h
         if is_sam:
             # Launchers face outward from the site centre.
             facing = math.atan2(y - unit.pos.y, x - unit.pos.x) if (fwd or right) else hdg

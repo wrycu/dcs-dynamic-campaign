@@ -146,6 +146,11 @@ the demos place a few things by hand. Scenarios (item 1) are built on top of thi
   and links, bridges), cleaned up by hand, and a scenario layer authored on top (ownership,
   front line, order of battle), with rules filling in routine placements. The map layer starts
   with what the first scenario needs and is filled in over time.
+- **Done (2026-11-24):** the whole Syria map layer (81 airbases, 283 towns, 30 military sites,
+  345 bridges, 217 infrastructure sites, 446 road links, country borders, rivers and water;
+  [theater](theater.md)), and the scenario layer format with the first scenario, Southern Syria
+  ([scenarios](scenarios.md)). Item 1 still has to decide doctrine, victory conditions and the
+  other kinds of war.
 
 ## 8. Ground war
 
@@ -579,6 +584,17 @@ role for that kind of mission so the right people see it and can join. For examp
   role ids with `allowed_mentions`, so a post can't ping @everyone by accident.
 - Rate limits: merge bursts into one post and don't repeat the same request until it changes.
 - Later: a bot that also lets players claim a flight from Discord.
+
+### SAM sites on the map's own revetments
+
+The map has real SAM sites: on Syria, for example, the SyADF 159th Regiment's ring of launcher
+pads with berms. Today siting only avoids buildings, so a battery placed there stands next to
+its pads rather than on them (Run 20). Find the pads (they aren't in the scenery survey:
+probably part of the ground texture, so perhaps from an airfield-style layout or hand-entered
+in the map edits) and put launchers on them and radars in the middle. The same goes for
+revetments at airbases and army bases. Also: siting can't see trees (no scripting query) or
+fences and walls (Run 21: an SA-13 overlapping a roadside fence), so a vehicle can end up in an
+orchard or through a fence.
 
 ### Time-lapse replay
 

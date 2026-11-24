@@ -49,7 +49,7 @@ In order. Items in brackets are only the part needed now; the rest comes later.
 
 1. **6** One campaign server, and the parts of **18** needed to run it (save on stop, status). **Done** ([server](server.md)); Run 15 passed in DCS (2026-11-23).
 2. **5** Per-type cruise speed (small; do it while touching the flight model). **Done** (2026-11-23).
-3. **7** Theater data for Syria: the generated map layer, cleaned up for the first scenario's area, plus that scenario's authored layer.
+3. **7** Theater data for Syria: the generated map layer, cleaned up for the first scenario's area, plus that scenario's authored layer. **Done** (2026-11-24): the whole Syria map layer with infrastructure, borders and water ([theater](theater.md)), and the Southern Syria scenario layer ([scenarios](scenarios.md)); its first DCS run is Run 19.
 4. **8** Ground war: movement, abstract fights, captures, front line.
 5. **1** [one scenario, D2]
 6. **2** Planner (ATO) and choosing a flight.

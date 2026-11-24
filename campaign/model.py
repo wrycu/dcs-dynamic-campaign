@@ -41,6 +41,9 @@ class ObjectiveType(Enum):
     BRIDGE = auto()
     FACTORY = auto()
     POWER_PLANT = auto()
+    SUBSTATION = auto()
+    FUEL_DEPOT = auto()
+    DAM = auto()
     REFINERY = auto()
     DEPOT = auto()
     RADAR = auto()
@@ -66,6 +69,10 @@ class ObjectiveDef:
     features: list[Feature]
     priority: int  # base strategic value
     dcs_airbase: str | None = None
+    # For an objective off the road network (infrastructure): the town, airbase or military site
+    # whose area it's in, so it changes hands with it.
+    area_of: str | None = None
+    country: str | None = None   # from the map's borders (Natural Earth), e.g. "Syria", "Turkey"
 
 
 @dataclass
@@ -74,6 +81,8 @@ class Link:
     b: str  # objective id
     kind: str  # "road" | "rail" | "sea"
     via: list[str] = field(default_factory=list)  # bridge objective ids this link depends on
+    route: list[Pos] = field(default_factory=list)  # DCS road route from a to b (simplified), if any
+    length_m: float = 0.0                           # along the route (straight line if none)
 
 
 @dataclass
@@ -232,6 +241,8 @@ class GroundUnit:
     morale: float = 1.0  # 0..1
     spawn: SpawnState = SpawnState.AGGREGATED
     dcs_group: str | None = None
+    sited: bool = False  # spots found in DCS (see spawner.py: siting)
+    spots: list[Pos] = field(default_factory=list)  # each vehicle's spot: clear of buildings, water, runways
 
 
 @dataclass

@@ -13,11 +13,20 @@ Loss accounting: a ``unit_killed`` for ``gu:<id>#<n>`` decrements that formation
 once per DCS unit name per spawn. When a group despawns, the survivors DCS reports replace the
 composition, and every unit that is not among them counts as already dead, so a kill event that
 is still queued behind the despawn ack cannot be counted twice.
+
+Siting: placements come from the map layer, which doesn't know where buildings stand. Before a
+formation first spawns, the mission's ``clear_spots`` query moves each vehicle of its layout to
+the nearest clear ground (within ``SITE_SEARCH_M``): no buildings, statics or units within
+``SITE_CLEAR_M``, no water or runway, not steep, and not on another vehicle's spot. Vehicles go
+one by one, so a city's defences use its streets, squares and lots instead of leaving town for a
+field big enough for the whole layout. The spots are kept (``GroundUnit.spots``); the formation
+is sited again only after it moves more than ``MOVED_M`` from them in DCS.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any, Awaitable, Callable
 
@@ -33,6 +42,10 @@ Call = Callable[[str, dict[str, Any]], Awaitable[Any]]
 ENGAGED_HOLD_S = 180.0    # keep a formation spawned this long after it kills or loses something
 FAIL_BACKOFF_S = 60.0     # don't retry a failed spawn for this long
 MISSING_TICKS = 2         # telemetry reports without a spawned group before it counts as gone
+SITE_SEARCH_M = 1000.0    # how far a vehicle may move from its layout spot to find clear ground
+SITE_CLEAR_M = 20.0       # room around a vehicle (a building's point is its centre)
+SITE_SPACING_M = 15.0     # two vehicles' spots at least this far apart
+MOVED_M = 100.0           # a spawned group's reported position counts as a move beyond this
 
 
 class GroundSpawner:
@@ -114,7 +127,7 @@ class GroundSpawner:
             u = self.state.ground_units.get(parsed.model_id)
             pos = g.get("pos")
             if u and u.spawn is SpawnState.SPAWNED and isinstance(pos, dict):
-                u.pos = Pos(float(pos["x"]), float(pos["y"]))
+                self._moved(u, pos)
         for u in self.state.ground_units.values():
             if u.spawn is not SpawnState.SPAWNED or u.id in self.busy or u.id in seen:
                 self.missing.pop(u.id, None)
@@ -167,8 +180,45 @@ class GroundSpawner:
 
     # ---------- commands ----------
 
+    async def _site(self, u: GroundUnit) -> None:
+        """Move each vehicle to clear ground near its layout spot, once (see the module notes)."""
+        want = [Pos(v["x"], v["y"]) for v in build_ground_spawn(u).data["group"]["units"]]
+        try:
+            res = await self.call(Op.QUERY, {"what": "clear_spots", "points": [{"x": p.x, "y": p.y} for p in want],
+                                             "radius": SITE_CLEAR_M, "spacing": SITE_SPACING_M,
+                                             "max": SITE_SEARCH_M})
+        except Exception as e:  # noqa: BLE001 - spawn on the layout; try again next spawn
+            log.warning("siting %s failed: %s", u.id, e)
+            return
+        got = as_list((res or {}).get("spots")) if isinstance(res, dict) else []
+        spots, stuck, far = [], 0, 0.0
+        for i, p in enumerate(want):
+            q = got[i] if i < len(got) else None
+            if isinstance(q, dict) and "x" in q:
+                spot = Pos(float(q["x"]), float(q["y"]))
+                far = max(far, math.hypot(spot.x - p.x, spot.y - p.y))
+            else:
+                spot, stuck = p, stuck + 1
+            spots.append(spot)
+        u.spots, u.sited = spots, True
+        if stuck:
+            log.warning("sited %s: %d of %d vehicles found no clear ground within %.0f m", u.id, stuck,
+                        len(want), SITE_SEARCH_M)
+        log.info("sited %s: %d vehicles, moved up to %.0f m (clear ground)", u.id, len(want), far)
+
+    def _moved(self, u: GroundUnit, pos: dict) -> None:
+        p = Pos(float(pos["x"]), float(pos["y"]))
+        # Telemetry and despawn report one vehicle's position, not the formation's: only a real
+        # move (away from every spot it was given) changes its position and needs siting again.
+        ref = u.spots if u.sited and u.spots else [u.pos]
+        if min((p.x - q.x) ** 2 + (p.y - q.y) ** 2 for q in ref) > MOVED_M ** 2:
+            u.pos = p
+            u.sited, u.spots = False, []
+
     async def _spawn(self, u: GroundUnit) -> None:
         try:
+            if not (u.sited and u.spots):
+                await self._site(u)
             spawn = build_ground_spawn(u)
             await self.call(Op.SPAWN_GROUP, spawn.data)
         except Exception as e:  # noqa: BLE001 - any failure: back off, reconcile on next hello
@@ -204,7 +254,7 @@ class GroundSpawner:
             self.dead[u.id] = set(self.unit_types.get(u.id, {})) - alive
             pos = res.get("pos")
             if isinstance(pos, dict):
-                u.pos = Pos(float(pos["x"]), float(pos["y"]))
+                self._moved(u, pos)
         log.info("despawned %s (%d vehicles left)", u.id, strength(u))
         self._aggregate(u)
 

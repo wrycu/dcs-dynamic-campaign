@@ -865,7 +865,8 @@ function commands.query(d)
         for _, m in ipairs(match) do
           if string.find(lt, m, 1, true) then
             local pok, p = pcall(o.getPoint, o)
-            found[#found + 1] = { type = t, pos = pok and pos2(p) or nil }
+            local nok, name = pcall(o.getName, o)   -- scenery: its map object id, as text
+            found[#found + 1] = { type = t, pos = pok and pos2(p) or nil, id = nok and name or nil }
             break
           end
         end
@@ -902,6 +903,71 @@ function commands.query(d)
     local out = {}
     for i, q in ipairs(pts) do out[i] = { x = q.x, y = q.y } end
     return { points = out }
+  elseif d.what == "surface_grid" then
+    -- land.getSurfaceType on a grid, as one digit per cell (1 land, 2 shallow water, 3 water,
+    -- 4 road, 5 runway), row by row: rows go north (x0 + i*cell), cells east (y0 + j*cell).
+    local rows = {}
+    for i = 0, d.nx - 1 do
+      local cells = {}
+      for j = 0, d.ny - 1 do
+        cells[j + 1] = tostring(land.getSurfaceType({ x = d.x0 + i * d.cell, y = d.y0 + j * d.cell }) or 0)
+      end
+      rows[i + 1] = table.concat(cells)
+    end
+    return { rows = rows }
+  elseif d.what == "clear_spots" then
+    -- For each of d.points (a vehicle's spot), the nearest spot within d.max m with nothing in a
+    -- circle of d.radius m: no scenery (buildings), statics or units, land or road under it (no
+    -- water or runway), not steep, and at least d.spacing m from the spots already given. Rings
+    -- outward, finer near the point. { none = true } where there is none.
+    local r, max_m, spacing = d.radius or 20, d.max or 1000, d.spacing or 15
+    local cats = { Object.Category.SCENERY, Object.Category.STATIC, Object.Category.UNIT }
+    local taken, out = {}, {}
+    local function clear(x, y)
+      for _, q in ipairs(taken) do
+        if (q.x - x) ^ 2 + (q.y - y) ^ 2 < spacing * spacing then return false end
+      end
+      local lo, hi = math.huge, -math.huge
+      for k = 0, 4 do
+        local px, py = x, y
+        if k > 0 then px, py = x + r * math.cos(k * math.pi / 2), y + r * math.sin(k * math.pi / 2) end
+        local s = land.getSurfaceType({ x = px, y = py })
+        if s ~= land.SurfaceType.LAND and s ~= land.SurfaceType.ROAD then return false end
+        local h = land.getHeight({ x = px, y = py })
+        if h < lo then lo = h end
+        if h > hi then hi = h end
+      end
+      if hi - lo > 4 then return false end
+      local hit = false
+      local vol = { id = world.VolumeType.SPHERE,
+                    params = { point = { x = x, y = land.getHeight({ x = x, y = y }), z = y }, radius = r } }
+      world.searchObjects(cats, vol, function() hit = true; return false end)
+      return not hit
+    end
+    local function find(cx, cy)
+      if clear(cx, cy) then return { x = cx, y = cy } end
+      local ring, tried = 0, 0
+      while tried < 1500 do
+        local step = ring < 100 and 10 or (ring < 300 and 25 or 50)
+        ring = ring + step
+        if ring > max_m then break end
+        local n = math.max(6, math.ceil(2 * math.pi * ring / step))
+        local a0 = ring / step   -- turn each ring a little so the spots don't line up
+        for k = 0, n - 1 do
+          local a = a0 + 2 * math.pi * k / n
+          local x, y = cx + ring * math.cos(a), cy + ring * math.sin(a)
+          tried = tried + 1
+          if clear(x, y) then return { x = x, y = y } end
+        end
+      end
+      return nil
+    end
+    for i, q in ipairs(d.points or {}) do
+      local spot = find(q.x, q.y)
+      if spot then taken[#taken + 1] = spot end
+      out[i] = spot or { none = true }   -- the encoder has no null
+    end
+    return { spots = out }
   elseif d.what == "heights" then
     -- Terrain elevation (m) for each {x, y} in d.points, in order; e.g. for waypoint elevations.
     local out = {}
