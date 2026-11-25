@@ -44,6 +44,8 @@ GROUND_TYPES: dict[str, GroundType] = {
     "M1097 Avenger": GroundType(0.5, 0.6, shorad_pk=0.003),
     "M1043 HMMWV Armament": GroundType(1.0, 0.6),
     "Soldier M4": GroundType(0.5, 0.4),
+    "Soldier M249": GroundType(0.7, 0.4),
+    "Soldier stinger": GroundType(0.1, 0.4, shorad_pk=0.004),
     # red
     "T-72B": GroundType(5, 2),
     "T-55": GroundType(2.5, 1.2),
@@ -59,6 +61,9 @@ GROUND_TYPES: dict[str, GroundType] = {
     "Strela-10M3": GroundType(0.2, 0.7, shorad_pk=0.004),
     # garrisons: local infantry and guns holding a town or base
     "Infantry AK": GroundType(0.4, 0.4),
+    "Paratrooper AKS-74": GroundType(0.4, 0.4),
+    "Soldier RPG": GroundType(1.0, 0.4),     # anti-tank
+    "SA-18 Igla manpad": GroundType(0.1, 0.4, shorad_pk=0.004),
     "ZU-23 Emplacement": GroundType(0.6, 0.8, shorad_pk=0.002),
 }
 DEFAULT_GROUND = GroundType(1, 1)

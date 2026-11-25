@@ -64,11 +64,37 @@ MANEUVER = {GroundRole.ARMOR, GroundRole.MECH, GroundRole.INFANTRY, GroundRole.A
 FRONTLINE = {GroundRole.ARMOR, GroundRole.MECH, GroundRole.INFANTRY}   # take a defensive post
 STATIC_ROLES = {GroundRole.SAM, GroundRole.AAA}
 
-# Local troops holding towns and airbases (DCS types).
+# Local troops holding towns and airbases (DCS types). Infantry is a mix: riflemen, anti-tank
+# (RPG) and machine guns. DCS has no red machine-gunner nor blue anti-tank soldier, so those go to
+# riflemen. MANPADS are left out for now (backlog item 8: how to mix them in).
+@dataclass(frozen=True)
+class GarrisonTypes:
+    rifle: str
+    rifle2: str | None     # a second rifleman type, for variety (red: paratroopers)
+    at: str | None         # anti-tank
+    mg: str | None         # machine gun
+    manpads: str           # not in garrisons yet
+    apc: str | None
+    gun: str | None        # AA gun emplacement
+
+
 GARRISON_TYPES = {
-    Side.RED: ("Infantry AK", "BTR-80", "ZU-23 Emplacement"),
-    Side.BLUE: ("Soldier M4", "M1043 HMMWV Armament", None),
+    Side.RED: GarrisonTypes("Infantry AK", "Paratrooper AKS-74", "Soldier RPG", None, "SA-18 Igla manpad",
+                            "BTR-80", "ZU-23 Emplacement"),
+    Side.BLUE: GarrisonTypes("Soldier M4", None, None, "Soldier M249", "Soldier stinger",
+                             "M1043 HMMWV Armament", None),
 }
+
+
+def infantry(side: Side, n: int) -> dict[str, int]:
+    """n infantry of a side: a fifth anti-tank, a tenth machine guns, the rest riflemen."""
+    t = GARRISON_TYPES.get(side, GARRISON_TYPES[Side.RED])
+    at = n // 5 if t.at else 0
+    mg = n // 10 if t.mg else 0
+    rifles = n - at - mg
+    rifle2 = rifles // 4 if t.rifle2 else 0
+    comp = {t.rifle: rifles - rifle2, t.rifle2: rifle2, t.at: at, t.mg: mg}
+    return {k: v for k, v in comp.items() if k and v > 0}
 
 Notify = Callable[[str], None]
 Call = Callable[[str, dict[str, Any]], Awaitable[Any]]
@@ -78,18 +104,42 @@ def garrison_for(o: ObjectiveDef, side: Side) -> dict[str, int]:
     """What holds a town or airbase with no formation in it: more in bigger towns."""
     if side not in GARRISON_TYPES or o.type not in (ObjectiveType.CITY, ObjectiveType.AIRBASE):
         return {}
-    inf, apc, gun = GARRISON_TYPES[side]
+    t = GARRISON_TYPES[side]
     if o.type is ObjectiveType.AIRBASE:
-        comp = {inf: 40, apc: 4, gun: 6}
+        n_inf, vehicles = 40, {t.apc: 4, t.gun: 6}
     else:
-        comp = {inf: 10 + 5 * o.priority, apc: o.priority, gun: 1 + o.priority // 2}
-    return {t: n for t, n in comp.items() if t and n > 0}
+        n_inf, vehicles = 10 + 5 * o.priority, {t.apc: o.priority, t.gun: 1 + o.priority // 2}
+    comp = infantry(side, n_inf)
+    comp.update({k: v for k, v in vehicles.items() if k and v > 0})
+    return comp
 
 
 def occupiers(side: Side) -> dict[str, int]:
     """What the side that takes an objective leaves behind to hold it."""
-    inf, _, gun = GARRISON_TYPES.get(side, GARRISON_TYPES[Side.RED])
-    return {t: n for t, n in {inf: 12, gun: 1}.items() if t}
+    t = GARRISON_TYPES.get(side, GARRISON_TYPES[Side.RED])
+    comp = infantry(side, 12)
+    if t.gun:
+        comp[t.gun] = 1
+    return comp
+
+
+def _mix_old_garrison(u: GroundUnit) -> None:
+    """A garrison saved with all riflemen, or with MANPADS: the same number of infantry, mixed."""
+    t = GARRISON_TYPES.get(u.side)
+    if t is None:
+        return
+    kinds = [k for k in (t.rifle, t.rifle2, t.at, t.mg, t.manpads) if k]
+    old = {k: u.composition.get(k, 0) for k in kinds}
+    if not old[t.manpads] and any(old[k] for k in kinds if k != t.rifle):
+        return   # already mixed, no MANPADS
+    n = sum(old.values())
+    if not n:
+        return
+    for k in kinds:
+        u.composition.pop(k, None)
+    for k, v in infantry(u.side, n).items():
+        u.composition[k] = u.composition.get(k, 0) + v
+    u.sited, u.spots = False, []
 
 
 # How far an objective's edge is from its centre. The map layer has no town outlines; a town's
@@ -213,6 +263,8 @@ class GroundWar:
                 # Saved before garrisons stood on the edge: site them again on the next spawn.
                 u.ring_m = edge_m(self.objs[u.location_id])
                 u.sited, u.spots = False, []
+            if u.role is GroundRole.GARRISON and u.spawn is SpawnState.AGGREGATED:
+                _mix_old_garrison(u)
 
     # ---------- System ----------
 

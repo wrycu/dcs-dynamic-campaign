@@ -21,8 +21,11 @@ end: battles ringed, moving formations with a line to where they're going) and `
 - **Attacks.** A formation heading for an enemy objective stops 3 km short and attacks
   whoever holds it: the formations there and the local garrison. In DCS it then drives into the
   objective across country.
-- **Garrisons.** Every town and airbase starts with local troops, more in bigger towns. Red's
-  are infantry, BTR-80s and ZU-23s; blue's are infantry and armed Humvees. A side that takes an
+- **Garrisons.** Every town and airbase starts with local troops, more in bigger towns. The
+  infantry is mixed: a fifth anti-tank, a tenth machine guns, the rest riflemen. Red's are AK
+  riflemen and paratroopers and RPG gunners (DCS has no red machine-gunner), with BTR-80s and
+  ZU-23s. Blue's are M4 riflemen and M249 gunners (DCS has no blue anti-tank soldier), with
+  armed Humvees. No MANPADS yet (backlog item 8). A side that takes an
   objective leaves a small garrison of its own. A garrison is a formation (role `GARRISON`,
   order `HOLD`) that never moves. It stands round the edge of its town in 3–8 strongpoints, each
   a mix of infantry and vehicles, facing out. It spawns in DCS like any other, but only within

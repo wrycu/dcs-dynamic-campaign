@@ -340,6 +340,30 @@ class GarrisonLayoutTests(unittest.TestCase):
         self.assertEqual((g.ring_m, g.sited, g.spots), (TOWN_EDGE_M[2], False, []))
 
 
+class GarrisonMixTests(unittest.TestCase):
+    def test_garrison_infantry_is_mixed(self):
+        g = garrison_for(obj("t", 0, prio=2), Side.RED)
+        self.assertEqual(g, {"Infantry AK": 12, "Paratrooper AKS-74": 4, "Soldier RPG": 4,
+                             "BTR-80": 2, "ZU-23 Emplacement": 2})
+        b = garrison_for(obj("t", 0, prio=2), Side.BLUE)
+        self.assertEqual(b, {"Soldier M4": 18, "Soldier M249": 2, "M1043 HMMWV Armament": 2})
+        self.assertNotIn("SA-18 Igla manpad", occupiers(Side.RED))
+
+    def test_old_all_rifle_garrison_is_mixed_when_loaded(self):
+        w = World()
+        g = garrison_unit(w.state, w.theater.objectives["front"], Side.RED, {"Infantry AK": 20, "BTR-80": 2})
+        w.war()
+        self.assertEqual(sum(g.composition.values()), 22)
+        self.assertEqual(g.composition["Soldier RPG"], 4)
+        self.assertEqual(g.composition["BTR-80"], 2)
+        # One saved with MANPADS loses them to riflemen.
+        g2 = garrison_unit(w.state, w.theater.objectives["deep"], Side.RED,
+                           {"Infantry AK": 10, "Soldier RPG": 4, "SA-18 Igla manpad": 2})
+        w.war()
+        self.assertNotIn("SA-18 Igla manpad", g2.composition)
+        self.assertEqual(sum(g2.composition.values()), 16)
+
+
 class GarrisonBubbleTests(unittest.TestCase):
     def test_garrisons_spawn_closer_than_formations(self):
         from campaign.bubble import NM, BubbleConfig, despawn_radius, spawn_radius

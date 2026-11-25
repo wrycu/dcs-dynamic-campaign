@@ -977,7 +977,7 @@ Single player, FA-18C, about 40 minutes, Immortal on. Same attack as Run 22, now
 
 1. `python3 -m campaign.server --new --scenario southern_syria --ghost 201/35`. The ghost is on El Taebah.
 2. Start `campaign-dev/campaign-smoke.miz`. Expect `spawned gar_town_el_taebah_1` and, in Status (F10 > Other > Campaign > Status), a `Garrisons: 121, N in DCS` line. There should be no `save failed` lines; there should be a `saved` line about every 30 seconds.
-3. Fly to El Taebah (201°M, 35 nm). From the outside view (F2 on red units, or F10 with all units shown), check the garrison: 4 strongpoints of infantry with a BTR-80 or ZU-23, round the edge of town about 750 m (0.4 nm) from the centre and facing out, not inside buildings. A save from before this change moves its garrisons to the edge on their next spawn.
+3. Fly to El Taebah (201°M, 35 nm). From the outside view (F2 on red units, or F10 with all units shown), check the garrison: 4 strongpoints of mixed infantry (AK, AKS-74, RPG) with a BTR-80 or ZU-23, round the edge of town about 750 m (0.4 nm) from the centre and facing out, not inside buildings. A save from before this change moves its garrisons to the edge on their next spawn.
 4. Ctrl+Z to ×8. When the Coalition battalion comes near, Syria's formations at El Taebah, if any, should move to the town's southwest edge, facing it. The attackers should stop about 1.6 nm (3 km) short, then drive into town across country.
 5. Each game hour you should get `El Taebah, hour N: Coalition attackers at X%, Syria defenders at Y%`, and Status should show the battle with both percentages. Note whether the battalion and the garrison actually shoot at each other in DCS, and who loses what.
 6. Wait for `Coalition takes El Taebah` (about 3 game hours after the attack starts; ×8 is about 25 minutes). The Syrian garrison should disappear and a small Coalition one appear.
@@ -985,3 +985,8 @@ Single player, FA-18C, about 40 minutes, Immortal on. Same attack as Run 22, now
 
 ### What to send back
 Anything that looked wrong, especially: the garrison inside buildings or missing, attackers driving through the town without fighting, and reinforcements coming from far away. I'll read `build/logs/server.log`.
+
+### Results (2026-11-24)
+- **Passed:** El Taebah's garrison spawned and was sited (24, moved up to 50 m). The coalition battalion fought it in DCS and killed all 24 between T+1:28 and T+1:40, and the town was taken at T+2:00 with a coalition garrison in its place. The hourly battle reports came up as messages. The run saved cleanly, and after a restart without `--new` the town was still the coalition's, with its garrison.
+- **Changed during the run:** the garrison spawned in the middle of town, because the edge layout applied only to battalions. Garrisons now stand in strongpoints round the town's edge (estimated from its size), and were on the edge after a restart. A town is now taken as soon as nothing defends it, not at the next hour. Garrison infantry is a mix (riflemen, RPG, machine guns); MANPADS were tried and taken out again (backlog item 8).
+- **Not yet seen in DCS:** the mixed infantry, and battalions deploying on the edge of a threatened town (El Taebah had none).

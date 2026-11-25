@@ -178,6 +178,13 @@ the edge of an objective, limits on reserves and hourly battle reports: done aft
   Bradleys, an Avenger with each company), with a short gap between groups on the road.
 - **More than one path.** Every battalion takes the same link road. Spread an attack over
   parallel roads where there are some, and approach from more than one side.
+- **MANPADS in garrisons and formations.** Taken out of the garrison mix for now: an Igla or
+  two at every town makes all low flying near towns lethal and hides where the real air
+  defence is. To decide: which places get them (airbases, big towns, the front line, formations
+  rather than garrisons), how many, whether they're hidden until they fire, and how players
+  learn about them (intel, item 10). In DCS: `SA-18 Igla manpad` / `Soldier stinger` (and the
+  `comm` command units); the threat ranges are in `campaign/catalog.py`, and the abstract
+  SHORAD chance in `campaign/combat.py`.
 - **Real town outlines.** Town edges are estimated from size (500–1,000 m). Measuring each
   town's built-up area in the map extraction would put garrisons and defence lines on the
   real edge, and give long towns the right shape.
@@ -449,6 +456,24 @@ Deepen it once the playable campaign runs on it:
   says about 50%); damaged vs destroyed vehicles (the war sim's repairs, made part of the model);
   artillery counter-battery; infantry that matters in towns; rivers and bridges as obstacles
   (P6 found the bridges); night and weather.
+- **A much deeper ground fight (asked for after Run 23).** Today one hour is: total firepower x
+  0.022 = hits, spread evenly over every enemy vehicle and soldier, and one roll each against
+  its toughness. To replace that with a simulation that has real structure:
+  - **Weapons against targets:** what each type can kill and at what range (a rifleman can't
+    hurt an M1, an RPG can at 300 m, a tank gun at 3 km, an ATGM at 4 km). Fire goes to the
+    targets a weapon is good against, not spread evenly.
+  - **Phases and range:** approach under artillery, a long-range firefight, the assault, and
+    house-to-house fighting in a town, each with its own weapons and losses.
+  - **Position and terrain:** where the defenders are (the edge posts, the strongpoints),
+    line of sight, cover by terrain type, attacking from more than one side, flanking.
+  - **Detection and surprise:** who sees whom first; ambushes; recon; smoke; night and weather.
+  - **Units as more than a sum:** damaged and destroyed vehicles, crews bailing out, suppression,
+    ammunition running out, command and cohesion, retreat under fire and pursuit.
+  - **Support:** artillery fire missions with counter-battery, engineers and mines, air defence
+    covering the fight, CAS and players' strikes in the same model.
+  - **Still to keep:** results that are reproducible from the seed; fast enough to run a week of
+    war in seconds; values checked against history and DCS (the 3:1 rule, `tools/combat_tables.py`);
+    and DCS losses for anything spawned, so the two agree when a player arrives mid-fight.
 - **Air:** missiles and fuel limit a fight; escorts screen strikers; GCI for the side without
   AWACS; a flight that is jumped jettisons and aborts; helicopters (item 31).
 - **Air defence:** SAM sites as formations that can be hit by strikes, not only SEAD; radar

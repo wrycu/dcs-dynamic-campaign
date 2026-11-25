@@ -38,7 +38,7 @@ THREAT_RANGE_M: dict[str, float] = {
     "M1097 Avenger": 5_000,
     "M48 Chaparral": 6_000,
     "SA-18 Igla manpad": 5_000,
-    "Stinger manpad": 4_500,
+    "Soldier stinger": 4_500,
     # guns
     "ZSU-23-4 Shilka": 2_500,
     "ZSU_57_2": 4_000,
