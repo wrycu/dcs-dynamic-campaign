@@ -19,7 +19,7 @@ ROLE_MARK = {GroundRole.ARMOR: "T", GroundRole.MECH: "M", GroundRole.ARTILLERY: 
              GroundRole.AAA: "a", GroundRole.INFANTRY: "I", GroundRole.SUPPLY: "L", GroundRole.HQ: "H"}
 
 
-def draw(path: Path, sd, built) -> None:
+def draw(path: Path, sd, built, title: str | None = None) -> None:
     from campaign.scenario_file import front_links
     theater, st = built.theater, built.state
     objs = theater.objectives
@@ -102,10 +102,19 @@ def draw(path: Path, sd, built) -> None:
             d.ellipse([x - 5, y - 5, x + 5, y + 5], fill=col)
 
     for u in st.ground_units.values():
+        if not sum(u.composition.values()) or u.role is GroundRole.GARRISON:
+            continue   # garrisons: one per town, would hide the formations
         x, y = px(u.pos)
         col = SIDE_COLOR[u.side]
+        if u.route:
+            nxt = objs[u.route[-1]].pos
+            d.line([x, y, *px(nxt)], fill=col + (140,), width=2)
         d.rectangle([x - 6, y - 6, x + 6, y + 6], fill=(255, 255, 255), outline=col, width=2)
         d.text((x - 3, y - 7), ROLE_MARK.get(u.role, "?"), fill=col, font=small)
+
+    for b in st.battles.values():
+        x, y = px(objs[b.at].pos)
+        d.ellipse([x - 16, y - 16, x + 16, y + 16], outline=(230, 140, 0), width=4)
 
     by_base: dict[str, list] = {}
     for sq in st.squadrons.values():
@@ -116,9 +125,10 @@ def draw(path: Path, sd, built) -> None:
             d.text((x + 11, y + 8 + 15 * i), f"{sq.aircraft_type} x{sq.aircraft_ready}{' (players)' if sq.player_flyable else ''}",
                    fill=SIDE_COLOR[sq.side], font=small)
 
-    blue = [u for u in st.ground_units.values() if u.side is Side.BLUE]
-    red = [u for u in st.ground_units.values() if u.side is Side.RED]
-    d.text((16, 14), f"{sd.title}: start", fill=(0, 0, 0), font=big)
+    forces = [u for u in st.ground_units.values() if u.role is not GroundRole.GARRISON]
+    blue = [u for u in forces if u.side is Side.BLUE]
+    red = [u for u in forces if u.side is Side.RED]
+    d.text((16, 14), title or f"{sd.title}: start", fill=(0, 0, 0), font=big)
     d.text((16, 44), f"Blue {sd.sides[Side.BLUE].get('name', '')}: {len(blue)} formations "
                      f"({sum(strength(u) for u in blue)} vehicles), "
                      f"{sum(s.aircraft_ready for s in st.squadrons.values() if s.side is Side.BLUE)} aircraft. "
@@ -128,6 +138,6 @@ def draw(path: Path, sd, built) -> None:
                      f"Front: {len(front)} links.", fill=(0, 0, 0), font=mid)
     d.text((16, 66), "Squares: airbases; circles: towns; diamonds: infrastructure; x: bridges (colour = owner, grey = "
                      "neutral). Boxes: formations (T tank, M mech, A artillery, S SAM, a AAA); shaded: SAM ranges. "
-                     "Orange: the front (links between blue and red).", fill=(60, 60, 60), font=small)
+                     "Orange: the front (links between blue and red); orange rings: battles; thin lines: where formations are going.", fill=(60, 60, 60), font=small)
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(path)

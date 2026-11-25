@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from campaign.geography import Area, Geography
-from campaign.model import GroundOrder, Link, ObjectiveDef, ObjectiveType, Pos, Side, Theater
+from campaign.model import GroundOrder, GroundRole, Link, ObjectiveDef, ObjectiveType, Pos, Side, Theater
 from campaign.scenario_file import (ScenarioError, build_state, front_links, load_scenario_def, scenario_path)
 
 NM = 1852.0
@@ -88,8 +88,12 @@ class ScenarioFileTests(unittest.TestCase):
         self.assertIn("SyADF 150th Regiment: SA-6 battery", names)
         self.assertIn("ab_red air defence: SA-8 platoon", names)
         self.assertIn("town_big defence: air defence platoon", names)
-        blue = [u for u in units if u.side is Side.BLUE]
+        blue = [u for u in units if u.side is Side.BLUE and u.role is not GroundRole.GARRISON]
         self.assertEqual(len(blue), 2)
+        gar = {u.location_id: u for u in units if u.role is GroundRole.GARRISON}
+        self.assertEqual(gar["town_jordan"].side, Side.BLUE)
+        self.assertEqual(gar["ab_red"].order, GroundOrder.HOLD)
+        self.assertNotIn("town_leb", gar)                       # neutral: nobody holds it
         self.assertTrue(all(u.order is GroundOrder.RESERVE for u in blue))
         a, b = (u.pos for u in blue)
         self.assertGreater(abs(a.x - b.x) + abs(a.y - b.y), 1000)    # spread out, not stacked

@@ -17,6 +17,8 @@ from .bubble import NM, BubbleConfig
 BUBBLE_KEYS: dict[str, tuple[str, float]] = {
     "ground_spawn_nm": ("ground_spawn", NM),
     "ground_despawn_nm": ("ground_despawn", NM),
+    "garrison_spawn_nm": ("garrison_spawn", NM),
+    "garrison_despawn_nm": ("garrison_despawn", NM),
     "sam_spawn_margin_nm": ("threat_spawn_margin", NM),
     "sam_despawn_margin_nm": ("threat_despawn_margin", NM),
     "min_dwell_s": ("min_dwell", 1.0),

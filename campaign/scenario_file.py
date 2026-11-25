@@ -17,6 +17,7 @@ from .geo import TERRAINS
 from .geography import Geography, load_geography
 from .model import (CampaignState, GroundOrder, GroundUnit, ObjectiveDef, ObjectiveState, ObjectiveType, Pos, Side,
                     SideState, Squadron, Theater)
+from .ground_war import garrison_for, garrison_unit
 from .templates import TEMPLATES
 from .theater import load_theater, theater_dir
 
@@ -89,8 +90,15 @@ def load_scenario_def(path: Path) -> ScenarioDef:
     if set(d) - known:
         raise ScenarioError(f"{path.name}: unknown keys {sorted(set(d) - known)}")
     rules = dict(d.get("rules") or {})
-    if set(rules) - {"military_sites", "airbase_defence", "city_defence"}:
-        raise ScenarioError(f"{path.name}: unknown keys in [rules]: {sorted(set(rules) - {'military_sites', 'airbase_defence', 'city_defence'})}")
+    rule_keys = {"military_sites", "airbase_defence", "city_defence", "garrisons"}
+    if set(rules) - rule_keys:
+        raise ScenarioError(f"{path.name}: unknown keys in [rules]: {sorted(set(rules) - rule_keys)}")
+    for k, v in (d.get("sides") or {}).items():
+        extra = set(v) - {"name", "countries", "posture", "goal"}
+        if extra:
+            raise ScenarioError(f"{path.name}: unknown keys in [sides.{k}]: {sorted(extra)}")
+        if v.get("posture", "defend") not in ("attack", "defend"):
+            raise ScenarioError(f"sides.{k}.posture must be \"attack\" or \"defend\"")
     for side_key, temps in (rules.get("airbase_defence") or {}).items():
         _side(side_key, "rules.airbase_defence")
         for t in temps:
@@ -153,9 +161,17 @@ def build_state(sd: ScenarioDef, theater: Theater | None = None, geo: Geography 
         o = objs[oid]
         owner = sd.owners.get(oid) or country_side.get(o.country or "", Side.NEUTRAL)
         st.objectives[oid] = ObjectiveState(id=oid, owner=owner)
+        if sd.rules.get("garrisons", True) and o.area_of is None:
+            g = garrison_for(o, owner)
+            if g:
+                garrison_unit(st, o, owner, g)
     for oid in sd.owners:
         if oid not in in_play:
             warnings.append(f"owners: {oid!r} isn't in play")
+    for side, v in sd.sides.items():
+        goal = v.get("goal")
+        if goal and goal not in in_play:
+            raise ScenarioError(f"sides.{side.name.lower()}.goal: {goal!r} isn't an objective in play")
 
     def owner(oid: str) -> Side:
         return st.objectives[oid].owner if oid in st.objectives else Side.NEUTRAL

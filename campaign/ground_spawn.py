@@ -19,6 +19,8 @@ from .protocol import PREFIX_GROUND, group_name, unit_name
 SPACING_M = 40.0
 JITTER_M = 8.0
 SAM_RING_M = 150.0
+STRONGPOINT = 6        # garrison vehicles per strongpoint on the edge of its town
+STRONGPOINT_SPACING_M = 20.0
 
 SKILL_FOR_SIDE = {Side.BLUE: "Good", Side.RED: "Average", Side.NEUTRAL: "Average"}
 
@@ -66,6 +68,28 @@ def _sam(types: list[str], rng: random.Random) -> list[tuple[float, float]]:
     return out
 
 
+def _perimeter(types: list[str], ring_m: float, rng: random.Random) -> list[tuple[float, float]]:
+    """A garrison: strongpoints evenly round a ring (the town's edge), each a mix of its types."""
+    k = max(3, min(8, math.ceil(len(types) / STRONGPOINT)))
+    start = rng.uniform(0, 2 * math.pi)
+    members: list[list[int]] = [[] for _ in range(k)]
+    for i in range(len(types)):
+        members[i % k].append(i)   # types are sorted, so round-robin mixes them
+    out: list[tuple[float, float]] = [(0.0, 0.0)] * len(types)
+    for s, idx in enumerate(members):
+        a = start + 2 * math.pi * s / k
+        cx, cy = ring_m * math.cos(a), ring_m * math.sin(a)
+        for j, i in enumerate(idx):
+            # A small cluster: a ring of up to 6 around the first.
+            if j == 0:
+                dx = dy = 0.0
+            else:
+                b = 2 * math.pi * (j - 1) / max(1, len(idx) - 1)
+                dx, dy = STRONGPOINT_SPACING_M * math.cos(b), STRONGPOINT_SPACING_M * math.sin(b)
+            out[i] = (cx + dx, cy + dy)
+    return out
+
+
 def build_ground_spawn(unit: GroundUnit, heading_deg: float | None = None) -> GroundSpawn:
     """Build the spawn_group payload for a formation at its current position."""
     rng = _rng(unit.id)
@@ -74,7 +98,11 @@ def build_ground_spawn(unit: GroundUnit, heading_deg: float | None = None) -> Gr
         raise ValueError(f"ground unit {unit.id} has no vehicles")
     hdg = math.radians(heading_deg if heading_deg is not None else rng.uniform(0, 360))
     is_sam = unit.role in (GroundRole.SAM, GroundRole.AAA)
-    offsets = _sam(types, rng) if is_sam else _grid(len(types), rng)
+    ring = unit.role is GroundRole.GARRISON and unit.ring_m > 0
+    if ring:
+        offsets = _perimeter(types, unit.ring_m, rng)
+    else:
+        offsets = _sam(types, rng) if is_sam else _grid(len(types), rng)
     cos_h, sin_h = math.cos(hdg), math.sin(hdg)
     # Sited spots, if they cover every vehicle (after losses the first ones are used).
     spots = unit.spots if unit.sited and len(unit.spots) >= len(types) else []
@@ -88,8 +116,8 @@ def build_ground_spawn(unit: GroundUnit, heading_deg: float | None = None) -> Gr
             # Rotate (forward, right) by the heading: forward is north (+x), right is east (+y).
             x = unit.pos.x + fwd * cos_h - right * sin_h
             y = unit.pos.y + fwd * sin_h + right * cos_h
-        if is_sam:
-            # Launchers face outward from the site centre.
+        if is_sam or ring:
+            # Launchers face outward from the site centre; a garrison faces out of its town.
             facing = math.atan2(y - unit.pos.y, x - unit.pos.x) if (fwd or right) else hdg
         else:
             facing = hdg + rng.uniform(-0.15, 0.15)

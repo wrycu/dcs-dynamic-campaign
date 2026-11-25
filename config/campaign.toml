@@ -15,6 +15,11 @@ slot_sides = [0, 2]       # sides players may take: 0 spectators, 1 red, 2 blue 
 ground_spawn_nm = 20
 ground_despawn_nm = 25
 
+# Town and airbase garrisons (mostly infantry, one per town) use smaller distances, so they
+# don't fill the max_units budget ahead of the formations.
+garrison_spawn_nm = 8
+garrison_despawn_nm = 10
+
 # Air defences use their missile range plus these margins (or the ground distances, if larger),
 # so a site is up before anyone can enter its envelope. E.g. an SA-6 (11.9 nm) spawns at 21.9 nm.
 sam_spawn_margin_nm = 10

@@ -41,7 +41,7 @@ from .bridge import Bridge, BridgeError, Connection
 from .bubble import NM, attack_targets, strength
 from .flight_spawn import Takeoff
 from .ghosts import Ghosts
-from .model import CampaignState, Flight, FlightState, GroundUnit, Pos, SpawnState, Squadron, Theater
+from .model import CampaignState, Flight, FlightState, GroundRole, GroundUnit, Pos, SpawnState, Squadron, Theater
 from .persist import Autosave, SaveError, Snapshot, load
 from .protocol import Envelope, Hello, Src, as_list
 from .settings import Settings, SettingsError, load_settings
@@ -448,15 +448,22 @@ class Engine:
                      if f.hold_until is not None and f.state in AIRBORNE else "")
             pos = f" {self.bra(f.pos)}{alt}" if f.state in AIRBORNE or f.spawn is SpawnState.SPAWNED else ""
             lines.append(f"{f.callsign}: {f.aircraft}x {f.mission} {f.state.name.lower()} {where}{pos}{orbit}")
-        units = list(st.ground_units.values())
+        alive = [u for u in st.ground_units.values() if strength(u) > 0]
+        units = [u for u in alive if u.role is not GroundRole.GARRISON]
         shown = units if len(units) <= 15 else [u for u in units if u.spawn is SpawnState.SPAWNED]
         for u in shown:
             lines.append(f"{u.name}: {strength(u)} veh {'[DCS]' if u.spawn is SpawnState.SPAWNED else '[engine]'} "
                          f"{self.bra(u.pos)}")
         if len(shown) < len(units):
             lines.append(f"(and {len(units) - len(shown)} formations not in DCS)")
+        gar = [u for u in alive if u.role is GroundRole.GARRISON]
+        if gar:
+            live = [u for u in gar if u.spawn is SpawnState.SPAWNED]
+            lines.append(f"Garrisons: {len(gar)}, {len(live)} in DCS ({sum(strength(u) for u in live)} veh)")
         for sq in st.squadrons.values():
             lines.append(f"{sq.name}: {sq.aircraft_ready} ready")
+        for sys_ in self.systems:
+            lines += getattr(sys_, "status_lines", lambda: [])()
         return "\n".join(lines)
 
     async def report_loop(self) -> None:

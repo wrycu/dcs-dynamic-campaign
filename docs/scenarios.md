@@ -17,7 +17,7 @@ python3 -m campaign.server --new --scenario southern_syria   # play it
 | `map` | The DCS terrain; its map layer is `data/theaters/<map>/map.json`. |
 | `magvar` | Magnetic variation (degrees east), for the bearings below. |
 | `[area]` | `center` (an objective id) and `radius_nm`: objectives within are in play; the rest of the map is outside the war. |
-| `[sides.blue]`, `[sides.red]` | `name`, and `countries`: each side holds the objectives in its countries (from the map layer). Objectives in any other country are neutral. |
+| `[sides.blue]`, `[sides.red]` | `name`, and `countries`: each side holds the objectives in its countries (from the map layer). Objectives in any other country are neutral. `posture`: `"attack"` or `"defend"` (the ground commander, [ground war](ground-war.md)); `goal`: the objective an attacker drives towards. |
 | `[owners]` | Hand overrides: objective id = `"blue"` or `"red"`. |
 | `[[squadrons]]` | `id`, `name`, `side`, `type` (DCS aircraft type), `base` (an airbase objective id the side holds), `aircraft`, `pilots` (default: aircraft), `roles`, `player`. |
 | `[[formations]]` | Hand-placed ground forces: `side`, `at` (an objective id), optionally `brg_nm = [magnetic bearing, nm]` from it, `templates` (one formation each, `campaign/templates.py`), `name`, `order` (default `DEFEND`). |
@@ -39,6 +39,8 @@ those final spots.
 - `airbase_defence = { red = [...], blue = [...] }`: templates at every airbase a side holds.
 - `city_defence = { red = { min_priority = 3, templates = [...] } }`: templates at every town of at
   least that priority.
+- `garrisons = true` (default): every town and airbase starts with local troops, more in bigger
+  towns ([ground war](ground-war.md)).
 
 ## Templates
 
@@ -55,13 +57,17 @@ flying from Jordan and Israel against Syria, with the front at the borders.
 - 90 nm around Khalkhalah: southern Syria up to the Homs gap, northern Jordan, northern Israel,
   and Lebanon (neutral). 308 objectives in play: blue 120, red 140, neutral 48.
 - Blue: F-16C (Muwaffaq Salti), F/A-18C (Prince Hassan), A-10C (King Hussein Air College) and
-  F-15E (Ramat David) for players, F-15C (Ramat David); 64 aircraft. Two battalion groups staging
-  at Ramtha and Irbid, Hawks at the forward bases, Avengers at every airbase.
+  F-15E (Ramat David) for players, F-15C (Ramat David); 64 aircraft. Three US brigade combat
+  teams on the Jordanian border (Ramtha, Irbid, King Hussein Air College) and the IDF 7th
+  Armoured Brigade (Merkavas) below the Golan; 12 manoeuvre and 4 artillery battalions. Hawks at
+  the forward bases, Avengers at every airbase. 31 formations, 250 vehicles. It attacks towards
+  Damascus.
 - Red: MiG-29 (Sayqal), MiG-23 (Al-Dumayr), MiG-21 (Khalkhalah), Su-22 (Tha'lah), Su-24
   (Shayrat); 42 aircraft. Around Damascus three SA-2s, three SA-3s and an SA-11; SA-6s down the
   Daraa highway; early warning on Mount Hermon, at Ad Dumayr and Busra; brigades at every SAA
-  site. 103 formations, 856 vehicles.
+  site. 103 formations, 856 vehicles. It defends.
 - The front: 4 links (the Ramtha–Daraa crossings and Kiryat Shmona). The Golan has few towns big
   enough to be objectives; edits to the map layer can add some.
 
-Nothing moves or plans yet: that's the planner (item 2) and the ground war (item 8).
+The ground war runs from the start ([ground war](ground-war.md)); nothing plans air missions yet:
+that's the planner (item 2).

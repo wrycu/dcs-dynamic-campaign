@@ -1,17 +1,19 @@
 """The first scenario: a coalition against Syria, in the south (data/scenarios/southern_syria.toml).
 
 The starting state comes from the scenario file on the Syria map layer (campaign/scenario_file.py):
-who holds which objective, the squadrons, and the ground order of battle. Nothing moves or plans
-yet: the planner (item 2) and the ground war (item 8) come next. On the campaign server, the
-formations spawn around players like any others, and Status lists the sides.
+who holds which objective, the squadrons, and the ground order of battle. The ground war
+(campaign/ground_war.py) runs from the start: the coalition attacks towards Damascus, Syria holds
+and counterattacks. The planner (item 2) comes next. On the campaign server, the formations spawn
+around players like any others, and Status shows the front and the battles.
 """
 from __future__ import annotations
 
 import logging
 
+from campaign.ground_war import GroundWar, sides_from
 from campaign.model import CampaignState, Side
 from campaign.scenario_file import build_state, load_scenario_def, scenario_path, summary
-from campaign.server import Engine, Scenario
+from campaign.server import Engine, Scenario, System
 
 NAME = "southern_syria"
 log = logging.getLogger(__name__)
@@ -30,6 +32,12 @@ class SouthernSyria(Scenario):
 
     def new_state(self) -> CampaignState:
         return self.built.state
+
+    def systems(self, engine: Engine) -> list[System]:
+        def news(text: str) -> None:
+            log.info("WAR %s %s", engine.clock_text(), text)
+            engine.say(text, duration=10, log_it=False)
+        return [GroundWar(engine.state, self.theater, sides_from(self.sd), notify=news, call=engine.mission_call)]
 
     async def setup(self, engine: Engine) -> None:
         for line in summary(self.sd, self.built).splitlines():

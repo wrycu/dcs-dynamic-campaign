@@ -48,6 +48,14 @@ Nothing plans flights yet: the demos build them by hand. Needed:
 - Players get the route as a `.dtc` cartridge (as in the demos), since the server can't push
   waypoints into their jet. To find out: which modules can load a cartridge (the FA-18C can);
   other modules need the route on the kneeboard instead (item 39).
+- **Waypoints as a real sequence.** The cartridges we write today hold the flight's points only as
+  loose waypoints (WYPT), in no route sequence, like points made in the DTC editor. The pilot has
+  to step through them by hand. Write them as a route sequence instead (sequence 1, with the
+  `NAV_ROUTE` planning data), so the jet shows the line between them and auto-sequences.
+  `hornet_dtc(..., route=1)` in `campaign/dtc.py` already writes it, but it hasn't been tried in
+  DCS. To check in DCS with the FA-18C: the sequence appears on the HSI after the MUMI transfer,
+  AUTO sequencing works, and the import doesn't break the DTC window. Then make it the default
+  (`khalkhalah.py` and the planner). Other modules' formats when they're added.
 
 ## 3. War overview UI
 
@@ -154,7 +162,33 @@ the demos place a few things by hand. Scenarios (item 1) are built on top of thi
 
 ## 8. Ground war
 
-Ground formations hold position and nothing changes hands, so there is no front line yet.
+**First version done (2026-11-24): [ground war](ground-war.md).** Movement along links (in the
+engine and in DCS), hourly abstract fights with garrisons, captures, the front line, and simple
+commanders per side. Still to do: the DCS side of airbase captures, a stuck-group watchdog,
+bridges, and better commanders (see that page's "Not done yet"). Garrisons in DCS, defence on
+the edge of an objective, limits on reserves and hourly battle reports: done after Run 22.
+
+**Run 22 (2026-11-24): groups spawned and drove along the road. To do, from watching it:**
+
+- **March order.** A brigade's battalions move as unrelated groups, so the artillery led the
+  charge. Recon and armour should lead, mech follow, and artillery and air defence stay behind
+  and stop in range of the objective (artillery about 10-15 km back), not drive up to it.
+- **Smaller, mixed groups.** A whole battalion is one 15-vehicle DCS group, i.e. one long
+  column. Split it into company or platoon groups (4-6 vehicles) and mix them (tanks with
+  Bradleys, an Avenger with each company), with a short gap between groups on the road.
+- **More than one path.** Every battalion takes the same link road. Spread an attack over
+  parallel roads where there are some, and approach from more than one side.
+- **Real town outlines.** Town edges are estimated from size (500–1,000 m). Measuring each
+  town's built-up area in the map extraction would put garrisons and defence lines on the
+  real edge, and give long towns the right shape.
+- **Defence further out.** Defenders now hold the edge of their objective, facing the threat.
+  Later: send a small force (a company) out along the road the enemy is coming on to delay and
+  harass it, and pick better ground (a ridge, a town edge, a river line) within a few km.
+- **Off-road at the end.** Today they stay on the road to the stop point. For the last few km,
+  leave the road, deploy into a line (DCS "Off Road" waypoints with a formation such as
+  "Rank" or "Vee") and move up to the objective across country, then fight from there.
+
+Originally:
 
 - Movement along links, from each formation's `GroundOrder` (attack, defend, move, retreat), both
   in the engine and in DCS (a spawned formation gets a route).
@@ -551,6 +585,8 @@ commits to a flight, it drops to real time. Asked for 2026-11-20.
 
 ## 43. Living airfields
 
+Now part of item 44 (a living battlefield, every airbase near players).
+
 An airfield that a human flight departs from or recovers to (including diverts, item 24) should
 look in use while players are there: parked aircraft, ground crew and vehicles, fuel trucks, and
 air defence. Not for AI flights: too much to spawn for nobody to see. Asked for 2026-11-23.
@@ -561,6 +597,34 @@ air defence. Not for AI flights: too much to spawn for nobody to see. Asked for 
 - Static objects where possible (cheap), live units only for what has to act (air defence).
 - In DCS while a player is at or near the base (taking off, landing, or diverting there), gone
   when they've left. The parking that flights need stays free.
+
+## 44. A living battlefield
+
+Asked for 2026-11-24 after Run 21: Southern Syria in DCS is air defence and parked armour, which
+doesn't feel like a real war. Everything near players should look lived in: aircraft on the
+ramps and in the shelters, support vehicles, depots with stock, camps. Item 43 (living airfields
+for human flights) becomes one part of this.
+
+What shows comes from the campaign state, so it is also worth hitting: a target that counts.
+
+- **Airbases** (every airbase in the bubble, either side): each squadron's aircraft that aren't
+  flying, as statics on the base's parking (hardened shelters first, then the ramp). Ground crew
+  near them: fuel trucks, power carts, tugs, a tower and crew vehicles, fuel and ammunition
+  stores. A static aircraft destroyed costs its squadron that aircraft; a fuel or ammunition
+  store destroyed costs the base stock (item 9). Parking that flights need stays free. Red bases
+  become worth striking (OCA) before the planner exists.
+- **Army sites and formations:** a camp with each formation: tents or barracks, a command post,
+  supply trucks, fuel bladders, ammunition crates and parked support vehicles (repair, medical,
+  radio). Kept small, mostly statics, at clear spots (siting). Destroying the supplies costs the
+  formation supply (item 8's abstract fights use it).
+- **Depots, fuel depots, factories, ports:** stock you can see: crate stacks, containers, fuel
+  tanks, trucks at the gates, sized by the stock (item 9). Destroying them costs that stock.
+- **Movement:** supply convoys on the roads between depots and the front, and aircraft taking
+  off and landing at busy bases. These are the ground war and supply (items 8, 9) and the
+  planner (item 2): this item only makes what they move visible.
+- **Cost:** statics are cheap compared with live units. Their own cap and bubble (as for
+  formations), live units only for what has to act (air defence, convoys). Dressing spawns
+  after the formations that can shoot, so it never crowds them out of the vehicle cap.
 
 ## Minor improvements
 

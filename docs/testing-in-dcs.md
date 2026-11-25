@@ -942,3 +942,46 @@ Tell me when it's done, with screenshots of anything inside a building or anythi
 
 ### Results (2026-11-24)
 Passed. 44 formations were sited in their first 30 s with no stutter reported. Each formation's farthest-moved vehicle went a median of 50 m and at most 500 m, and every vehicle found clear ground. City defences stayed in town. One SA-13 overlapped a roadside fence: siting doesn't see fences and walls, just as it doesn't see trees (backlog: minor improvements).
+
+## Run 22: the ground war in DCS (`campaign.server --scenario southern_syria`)
+Single player, FA-18C, about 30 minutes, Immortal on. This is the ground war's first time in DCS. The coalition's 3rd BCT at King Hussein Air College attacks El Taebah, a Syrian border town, from the start. In DCS its battalions should:
+- drive north on the road at about 25 km/h;
+- stop about 1 nm short of El Taebah;
+- fight the town's garrison, which exists only in the engine for now;
+- take the town and drive in.
+
+A ghost on El Taebah keeps it all in DCS. The war runs on DCS's clock, so time acceleration speeds it up.
+
+1. From the repo: `python3 -m campaign.server --new --scenario southern_syria --ghost 201/35`
+   The ghost is on El Taebah, 201°M 35 nm from Khalkhalah.
+2. Start `campaign-dev/campaign-smoke.miz`. Within a minute the terminal logs `Coalition attacks town_el_taebah with ...` (the order) and `spawned` lines for the 3rd BCT's battalions (`blue_tank_bn_*`, `blue_mech_bn_*`).
+3. F10 map: find the blue groups south of El Taebah, near the `GHOST 1` label. They should start moving north within a minute or two. Leave the F10 map open, then **Ctrl+Z** for time acceleration, to ×4 or ×8 (Ctrl+Shift+Z steps back down).
+4. Watch until the terminal and a message say `Coalition attacks El Taebah` (the battalions arrived and stopped short), then, an hour or two of campaign time later, `Coalition wins at El Taebah` and `Coalition takes El Taebah`. Note whether the groups drove on the road, where they stopped, and whether they drove into town after the capture.
+5. F10 > Other > Campaign > Status: the `Front:` and `Moving:` lines at the end.
+6. Back to ×1, then fly over (201°M about 31 nm from where you start) and look at the column from the outside view: driving in a column on the road, not stuck, not off in the fields.
+7. Exit, Ctrl-C the server. Run step 1 again without `--new`, start the mission again, and check on the F10 map that the battalions are where they were (or further on), not back at their start.
+
+### What to send back
+Tell me when it's done, with anything that looked wrong: groups not moving, stuck, off the road, or messages that made no sense. I'll read `build/logs/server.log`.
+
+### Results (2026-11-24)
+- **Passed:** the groups spawned and drove along the road. The first attack was the 1st BCT's armoured battalion from Ramtha, not the 3rd BCT.
+- **Save bug:** every autosave failed (`can't save a dict key of type method`): `GroundWar.name()` hid the system's `name`. Fixed, with a test that saves the whole scenario.
+- **No capture:** the attack started at T+1:27 and the run ended at T+1:37, before the first hourly fight. The town looked empty because garrisons weren't in DCS yet. Continued offline, the coalition takes El Taebah at T+4:00.
+- **Found offline:** Syria sent 30 battalions to El Taebah, most on loops of 10–15 towns.
+- **Movement in DCS** (backlog item 8): the artillery led; one 15-vehicle column per battalion; everyone on the same road; on the road to the end.
+- **Changed after the run:** garrisons are formations that spawn in DCS (within 8 nm); defenders deploy on the edge of a threatened objective; attackers stop 3 km short; reserves are the nearest few, by road, with no long detours; hourly battle reports in messages and Status.
+
+## Run 23: a defended town (`campaign.server --scenario southern_syria`)
+Single player, FA-18C, about 40 minutes, Immortal on. Same attack as Run 22, now with El Taebah's garrison in DCS. Start a new campaign: saves from before this run have no garrison formations.
+
+1. `python3 -m campaign.server --new --scenario southern_syria --ghost 201/35`. The ghost is on El Taebah.
+2. Start `campaign-dev/campaign-smoke.miz`. Expect `spawned gar_town_el_taebah_1` and, in Status (F10 > Other > Campaign > Status), a `Garrisons: 121, N in DCS` line. There should be no `save failed` lines; there should be a `saved` line about every 30 seconds.
+3. Fly to El Taebah (201°M, 35 nm). From the outside view (F2 on red units, or F10 with all units shown), check the garrison: 4 strongpoints of infantry with a BTR-80 or ZU-23, round the edge of town about 750 m (0.4 nm) from the centre and facing out, not inside buildings. A save from before this change moves its garrisons to the edge on their next spawn.
+4. Ctrl+Z to ×8. When the Coalition battalion comes near, Syria's formations at El Taebah, if any, should move to the town's southwest edge, facing it. The attackers should stop about 1.6 nm (3 km) short, then drive into town across country.
+5. Each game hour you should get `El Taebah, hour N: Coalition attackers at X%, Syria defenders at Y%`, and Status should show the battle with both percentages. Note whether the battalion and the garrison actually shoot at each other in DCS, and who loses what.
+6. Wait for `Coalition takes El Taebah` (about 3 game hours after the attack starts; ×8 is about 25 minutes). The Syrian garrison should disappear and a small Coalition one appear.
+7. Exit, Ctrl-C, run step 1 without `--new`, start the mission: the town should still be the Coalition's, with its garrison.
+
+### What to send back
+Anything that looked wrong, especially: the garrison inside buildings or missing, attackers driving through the town without fighting, and reinforcements coming from far away. I'll read `build/logs/server.log`.

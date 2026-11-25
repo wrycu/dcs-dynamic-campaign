@@ -14,6 +14,7 @@ The campaign state is the truth. A DCS group is a temporary projection of a `Gro
 - **Observers:** every player aircraft from telemetry. Each observer also has a look-ahead point (`lookahead_s`, 60 s along its velocity), so fast jets don't outrun the bubble.
 - **Spawn and despawn distances** are set in `config/campaign.toml` (`[bubble]`, in nm). A formation spawns when a player comes within its spawn distance, and despawns only once every player is beyond its despawn distance. The despawn distance must be at least the spawn distance; the gap stops flicker at the edge.
   - **Ordinary formations:** `ground_spawn_nm` (20) and `ground_despawn_nm` (25).
+  - **Garrisons** of towns and airbases (see [ground war](ground-war.md)): `garrison_spawn_nm` (8) and `garrison_despawn_nm` (10). There is one per town, mostly infantry, so at 20 nm they would fill the budget.
   - **Anything with air defences:** its missile range plus `sam_spawn_margin_nm` (10) or `sam_despawn_margin_nm` (15), or the ground distances if those are larger. An SA-11 (18.9 nm) spawns at 28.9 nm, so it's up and searching before a player enters its envelope.
 - **Dwell:** a fresh spawn stays at least `min_dwell` (90 s).
 - **Combat pin:** a formation that kills or loses a unit stays spawned for 180 s.

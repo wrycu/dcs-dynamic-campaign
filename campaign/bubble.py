@@ -21,7 +21,7 @@ from typing import Iterable
 
 from .catalog import threat_range
 from .flight_spawn import ATTACK_RADIUS_M
-from .model import Flight, FlightState, GroundUnit, Pos, Side, SpawnState
+from .model import Flight, FlightState, GroundRole, GroundUnit, Pos, Side, SpawnState
 
 NM = 1852.0  # metres per nautical mile
 
@@ -38,6 +38,8 @@ class BubbleConfig:
     """Bubble tuning. Distances are metres here; operators set them in nm (campaign/settings.py)."""
     ground_spawn: float = 20 * NM          # visual/targeting-pod range plus slack
     ground_despawn: float = 25 * NM
+    garrison_spawn: float = 8 * NM         # town and airbase garrisons: many, static, mostly infantry
+    garrison_despawn: float = 10 * NM
     threat_spawn_margin: float = 10 * NM   # added to an air defence's engagement range
     threat_despawn_margin: float = 15 * NM
     min_dwell: float = 90.0           # seconds a fresh spawn is kept regardless of distance
@@ -53,8 +55,10 @@ class BubbleConfig:
     def __post_init__(self) -> None:
         if self.ground_spawn <= 0 or self.threat_spawn_margin < 0:
             raise ValueError("spawn distances must be positive")
-        if self.ground_despawn < self.ground_spawn:
+        if self.ground_despawn < self.ground_spawn or self.garrison_despawn < self.garrison_spawn:
             raise ValueError("ground despawn distance must be at least the spawn distance")
+        if self.garrison_spawn <= 0:
+            raise ValueError("spawn distances must be positive")
         if self.threat_despawn_margin < self.threat_spawn_margin:
             raise ValueError("air-defence despawn margin must be at least the spawn margin")
         if self.air_spawn <= 0:
@@ -74,11 +78,15 @@ def strength(unit: GroundUnit) -> int:
 
 
 def spawn_radius(unit: GroundUnit, cfg: BubbleConfig) -> float:
+    if unit.role is GroundRole.GARRISON:
+        return cfg.garrison_spawn
     threat = threat_range(unit.composition)
     return max(cfg.ground_spawn, threat + cfg.threat_spawn_margin) if threat else cfg.ground_spawn
 
 
 def despawn_radius(unit: GroundUnit, cfg: BubbleConfig) -> float:
+    if unit.role is GroundRole.GARRISON:
+        return cfg.garrison_despawn
     threat = threat_range(unit.composition)
     return max(cfg.ground_despawn, threat + cfg.threat_despawn_margin) if threat else cfg.ground_despawn
 

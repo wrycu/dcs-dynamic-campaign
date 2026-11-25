@@ -18,10 +18,13 @@ radius_nm = 90
 [sides.blue]
 name = "Coalition"
 countries = ["Jordan", "Israel"]
+posture = "attack"           # its ground commander attacks (campaign/ground_war.py)...
+goal = "town_damascus"       # ...towards this
 
 [sides.red]
 name = "Syria"
 countries = ["Syria"]
+posture = "defend"           # holds, reinforces, counterattacks
 # Everything else in the area (Lebanon, the Golan's Israeli side is Israel's) is neutral.
 
 [owners]                     # hand overrides of who holds an objective at the start
@@ -215,19 +218,31 @@ at = "town_busra"
 templates = ["red_ewr"]
 
 # Coalition ground forces staging in northern Jordan, and Hawks at the forward bases.
+# The coalition's ground forces: three US brigade combat teams on the Jordanian border, an
+# Israeli armoured brigade on the Golan. Fewer than Syria's, but much better (campaign/combat.py).
 [[formations]]
-name = "Coalition, Ramtha"
+name = "1st BCT"
 side = "blue"
 at = "town_ramtha"
-templates = ["blue_tank_bn", "blue_mech_bn", "blue_art_bn"]
-order = "RESERVE"
+templates = ["blue_tank_bn", "blue_tank_bn", "blue_mech_bn", "blue_art_bn"]
 
 [[formations]]
-name = "Coalition, Irbid"
+name = "2nd BCT"
 side = "blue"
 at = "town_irbid"
-templates = ["blue_tank_bn", "blue_mech_bn"]
-order = "RESERVE"
+templates = ["blue_tank_bn", "blue_mech_bn", "blue_mech_bn", "blue_art_bn"]
+
+[[formations]]
+name = "3rd BCT"
+side = "blue"
+at = "ab_king_hussein_air_college"
+templates = ["blue_tank_bn", "blue_tank_bn", "blue_mech_bn", "blue_art_bn"]
+
+[[formations]]
+name = "IDF 7th Armoured Brigade"
+side = "blue"
+at = "town_qiryat_shemona"
+templates = ["idf_tank_bn", "idf_tank_bn", "blue_mech_bn", "blue_art_bn"]
 
 [[formations]]
 side = "blue"

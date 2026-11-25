@@ -217,7 +217,8 @@ class GroundSpawner:
 
     async def _spawn(self, u: GroundUnit) -> None:
         try:
-            if not (u.sited and u.spots):
+            # Siting is for formations that stand somewhere; marching ones go to the road.
+            if not (u.sited and u.spots) and not u.route and u.battle is None:
                 await self._site(u)
             spawn = build_ground_spawn(u)
             await self.call(Op.SPAWN_GROUP, spawn.data)

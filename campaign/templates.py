@@ -38,6 +38,8 @@ TEMPLATES: dict[str, Template] = {
     # Blue: coalition ground forces.
     "blue_tank_bn": Template(GroundRole.ARMOR, {"M-1 Abrams": 10, "M-2 Bradley": 4, "M1097 Avenger": 1},
                              "armoured battalion (M1)"),
+    "idf_tank_bn": Template(GroundRole.ARMOR, {"Merkava_Mk4": 10, "M-2 Bradley": 4, "M1097 Avenger": 1},
+                            "armoured battalion (Merkava)"),
     "blue_mech_bn": Template(GroundRole.MECH, {"M-2 Bradley": 10, "M1043 HMMWV Armament": 4, "M1097 Avenger": 1},
                              "mechanised battalion (Bradley)"),
     "blue_art_bn": Template(GroundRole.ARTILLERY, {"M-109": 6, "M1043 HMMWV Armament": 2}, "artillery battalion"),

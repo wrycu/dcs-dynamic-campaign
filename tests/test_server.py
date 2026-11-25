@@ -279,6 +279,11 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*e.tasks)
         self.assertTrue(any(m.startswith("CAMPAIGN") for m in self.dcs.messages))
 
+    async def test_scenario_with_its_systems_saves(self):
+        e = Engine(settings(), load_scenario("southern_syria"), mission_call=FakeDCS().call)
+        snap = loads(dumps(e.snapshot()))
+        self.assertIn("ground_war", snap.extra["systems"])
+
     async def test_save_file_written(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "c.json"

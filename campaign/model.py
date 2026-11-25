@@ -213,6 +213,7 @@ class GroundRole(Enum):
     AAA = auto()
     SUPPLY = auto()
     HQ = auto()
+    GARRISON = auto()   # local troops holding a town or airbase; never moves (campaign/ground_war.py)
 
 
 class GroundOrder(Enum):
@@ -243,6 +244,25 @@ class GroundUnit:
     dcs_group: str | None = None
     sited: bool = False  # spots found in DCS (see spawner.py: siting)
     spots: list[Pos] = field(default_factory=list)  # each vehicle's spot: clear of buildings, water, runways
+    # Ground war (campaign/ground_war.py). Moving: ``route`` is the objectives still to reach,
+    # ``leg_from`` the one the current leg started from and ``leg_m`` how far along it it is.
+    leg_from: str | None = None
+    leg_m: float = 0.0
+    battle: str | None = None    # objective it is attacking or defending
+    rest_until: float = 0.0      # campaign time it is ready to attack again
+    full: int = 0                # vehicles at full strength (0: not yet known)
+    post: Pos | None = None      # where it defends, on the edge of its objective facing the threat
+    ring_m: float = 0.0          # garrison: its strongpoints are on a ring this far out (the town's edge)
+
+
+@dataclass
+class Battle:
+    """A fight for an objective (campaign/ground_war.py)."""
+    at: str            # objective id
+    attacker: Side
+    started: float     # campaign time
+    hours: int = 0
+    origin: dict[str, str] = field(default_factory=dict)  # attacking unit id -> objective it came from
 
 
 @dataclass
@@ -283,6 +303,7 @@ class CampaignState:
     warehouses: dict[str, Warehouse] = field(default_factory=dict)  # keyed by airbase objective id
     squadrons: dict[str, Squadron] = field(default_factory=dict)
     ground_units: dict[str, GroundUnit] = field(default_factory=dict)
+    battles: dict[str, Battle] = field(default_factory=dict)  # keyed by objective id
     packages: dict[str, Package] = field(default_factory=dict)
     flights: dict[str, Flight] = field(default_factory=dict)
     atos: dict[Side, ATO] = field(default_factory=dict)

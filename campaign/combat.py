@@ -38,9 +38,12 @@ class GroundType:
 GROUND_TYPES: dict[str, GroundType] = {
     # blue
     "M-1 Abrams": GroundType(15, 8),
+    "Merkava_Mk4": GroundType(14, 8),
     "M-2 Bradley": GroundType(4, 1.5),
     "M-109": GroundType(3, 1),
     "M1097 Avenger": GroundType(0.5, 0.6, shorad_pk=0.003),
+    "M1043 HMMWV Armament": GroundType(1.0, 0.6),
+    "Soldier M4": GroundType(0.5, 0.4),
     # red
     "T-72B": GroundType(5, 2),
     "T-55": GroundType(2.5, 1.2),
@@ -52,6 +55,8 @@ GROUND_TYPES: dict[str, GroundType] = {
     "Strela-1 9P31": GroundType(0.2, 0.6, shorad_pk=0.003),
     "Osa 9A33 ln": GroundType(0.2, 0.8, shorad_pk=0.005),
     "Ural-375": GroundType(0, 0.4),
+    "Grad-URAL": GroundType(2.0, 0.5),
+    "Strela-10M3": GroundType(0.2, 0.7, shorad_pk=0.004),
     # garrisons: local infantry and guns holding a town or base
     "Infantry AK": GroundType(0.4, 0.4),
     "ZU-23 Emplacement": GroundType(0.6, 0.8, shorad_pk=0.002),
