@@ -20,11 +20,13 @@ name = "Coalition"
 countries = ["Jordan", "Israel"]
 posture = "attack"           # its ground commander attacks (campaign/ground_war.py)...
 goal = "town_damascus"       # ...towards this
+air = "offensive"            # its planner goes after targets everywhere (campaign/planner.py)
 
 [sides.red]
 name = "Syria"
 countries = ["Syria"]
 posture = "defend"           # holds, reinforces, counterattacks
+air = "defensive"            # attrition: CAP at home, intercepts where blue is weak, its own counterattacks
 # Everything else in the area (Lebanon, the Golan's Israeli side is Israel's) is neutral.
 
 [owners]                     # hand overrides of who holds an objective at the start

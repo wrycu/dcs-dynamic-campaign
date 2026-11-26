@@ -173,6 +173,10 @@ class SideOrders:
     goal: str | None = None      # objective an attacker drives towards
     name: str = ""
     countries: frozenset[str] = frozenset()   # a defender only attacks to retake its own
+    air: str = ""                # air posture: "offensive" | "defensive" | "cautious" (campaign/planner.py)
+
+    def air_posture(self) -> str:
+        return self.air or ("offensive" if self.posture == "attack" else "defensive")
 
 
 class Graph:
@@ -433,6 +437,22 @@ class GroundWar:
         c = self.objs[oid].pos
         a, r = math.radians(k * 137.5 + 45), 1_500 * math.sqrt(k)
         self._place(u, Pos(c.x + r * math.cos(a), c.y + r * math.sin(a)))
+
+    def predict(self, u: GroundUnit, dt: float) -> Pos:
+        """Where a formation will be in dt seconds if it keeps marching (it is where it is otherwise)."""
+        if not u.route or not u.leg_from or u.battle:
+            return u.pos
+        left, frm, m = MARCH_MS * max(0.0, dt), u.leg_from, u.leg_m
+        for nxt in u.route:
+            if nxt not in self.g.adj.get(frm, {}):
+                break
+            length = self.g.length(frm, nxt)
+            end = max(0.0, length - STANDOFF_M) if self.owner(nxt) is not u.side else length
+            if m + left <= end or nxt == u.route[-1] or self.owner(nxt) is not u.side:
+                return self.g.point_along(frm, nxt, min(end, m + left))
+            left -= end - m
+            frm, m = nxt, 0.0
+        return u.pos
 
     def _leg_end(self, u: GroundUnit, nxt: str) -> float:
         """Where the leg to nxt ends: at it, or short of it if it's the enemy's."""
@@ -931,7 +951,7 @@ def sides_from(sd) -> dict[Side, SideOrders]:
     """The commanders' orders from a scenario definition's [sides.*]."""
     return {side: SideOrders(posture=v.get("posture", "attack" if side is Side.BLUE else "defend"),
                              goal=v.get("goal"), name=v.get("name", ""),
-                             countries=frozenset(v.get("countries") or ()))
+                             countries=frozenset(v.get("countries") or ()), air=v.get("air", ""))
             for side, v in sd.sides.items()}
 
 

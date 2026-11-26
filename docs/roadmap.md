@@ -52,7 +52,7 @@ In order. Items in brackets are only the part needed now; the rest comes later.
 3. **7** Theater data for Syria: the generated map layer, cleaned up for the first scenario's area, plus that scenario's authored layer. **Done** (2026-11-24): the whole Syria map layer with infrastructure, borders and water ([theater](theater.md)), and the Southern Syria scenario layer ([scenarios](scenarios.md)); its first DCS run is Run 19.
 4. **8** Ground war: movement, abstract fights, captures, front line. **First version done** (2026-11-24, [ground war](ground-war.md)); its first DCS run is Run 22.
 5. **1** [one scenario, D2]
-6. **2** Planner (ATO) and choosing a flight.
+6. **2** Planner (ATO) and choosing a flight. Design note: [planner](planner.md). The air war and the planner are built and in the campaign server (2026-11-25); first DCS run is Run 24. Next, players claiming flights.
 7. **11** Players in the campaign: slots (P2), losses, pilot roster [basic].
 8. **39** Kneeboard pages, and **16** [briefing only].
 9. **9** [replacements only, so the war doesn't run dry].

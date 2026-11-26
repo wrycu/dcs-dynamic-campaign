@@ -17,7 +17,7 @@ python3 -m campaign.server --new --scenario southern_syria   # play it
 | `map` | The DCS terrain; its map layer is `data/theaters/<map>/map.json`. |
 | `magvar` | Magnetic variation (degrees east), for the bearings below. |
 | `[area]` | `center` (an objective id) and `radius_nm`: objectives within are in play; the rest of the map is outside the war. |
-| `[sides.blue]`, `[sides.red]` | `name`, and `countries`: each side holds the objectives in its countries (from the map layer). Objectives in any other country are neutral. `posture`: `"attack"` or `"defend"` (the ground commander, [ground war](ground-war.md)); `goal`: the objective an attacker drives towards. |
+| `[sides.blue]`, `[sides.red]` | `name`, and `countries`: each side holds the objectives in its countries (from the map layer). Objectives in any other country are neutral. `posture`: `"attack"` or `"defend"` (the ground commander, [ground war](ground-war.md)); `goal`: the objective an attacker drives towards. `air`: the air posture, `"offensive"`, `"defensive"` or `"cautious"` (the planner, [planner](planner.md)); by default offensive for an attacker and defensive for a defender. |
 | `[owners]` | Hand overrides: objective id = `"blue"` or `"red"`. |
 | `[[squadrons]]` | `id`, `name`, `side`, `type` (DCS aircraft type), `base` (an airbase objective id the side holds), `aircraft`, `pilots` (default: aircraft), `roles`, `player`. |
 | `[[formations]]` | Hand-placed ground forces: `side`, `at` (an objective id), optionally `brg_nm = [magnetic bearing, nm]` from it, `templates` (one formation each, `campaign/templates.py`), `name`, `order` (default `DEFEND`). |

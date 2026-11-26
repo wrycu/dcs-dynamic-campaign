@@ -103,6 +103,12 @@ class AirBubble:
         self.pinned_until: dict[str, float] = {}
         self.backoff_until: dict[str, float] = {}
         self.busy: set[str] = set()
+        # Called when a flight not in DCS reaches a waypoint: (flight, waypoint index). The air war
+        # (campaign/air_war.py) resolves what happens there.
+        self.on_waypoint: Callable[[Flight, int], None] | None = None
+        # Called before a flight is spawned in DCS, to fill in what only DCS knows (e.g. the
+        # airdrome id of its LAND waypoint). May raise ValueError: the spawn is tried again later.
+        self.prepare: Callable[[Flight], None] | None = None
 
     # ---------- save / load (all times are on the campaign clock, which is saved) ----------
 
@@ -147,8 +153,16 @@ class AirBubble:
         self.state.clock = t1 = t0 + dt
         for f in list(self.state.flights.values()):
             if f.spawn is SpawnState.AGGREGATED and f.state in AIRBORNE and f.aircraft > 0:
+                before = f.next_wp
                 arrived = fly(f, t0, t1, flight_cruise_ms(self.state, f))
-                if arrived:
+                if self.on_waypoint is not None:
+                    for i in range(before, min(f.next_wp, len(f.waypoints))):
+                        self.on_waypoint(f, i)
+                        if f.aircraft <= 0:
+                            break
+                if f.aircraft <= 0:
+                    f.state = FlightState.LOST
+                elif arrived:
                     self.air.arrive_aggregated(f, arrived)
 
     def on_event(self, data: dict[str, Any]) -> None:
@@ -228,6 +242,8 @@ class AirBubble:
             self.busy.discard(fid)
 
     async def _spawn(self, f: Flight) -> None:
+        if self.prepare is not None:
+            self.prepare(f)
         takeoff = None
         if f.state is FlightState.PLANNED and f.start is not StartMode.AIR:
             takeoff = await self.takeoff_for(f)

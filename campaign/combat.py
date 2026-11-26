@@ -228,8 +228,11 @@ AIR_TYPES: dict[str, AirType] = {
     "MiG-23MLD": AirType(4, 0.4),
     "MiG-21Bis": AirType(3, 0.3),
     "Su-22M4": AirType(1, 0.5),
+    "Su-17M4": AirType(1, 0.5),      # DCS's Su-22 (the export Su-17)
     "Su-24M": AirType(1, 0.6, ecm=0.9),
+    "F-15ESE": AirType(8, 0.8, ecm=0.7),
 }
+LOADED_PENALTY = 3.0   # air-to-air quality lost while carrying bombs (until it jettisons)
 DEFAULT_AIR = AirType(3, 0.5)
 
 
@@ -256,6 +259,7 @@ def _shot(rng: random.Random, pk: float, q_own: float, q_target: float, cfg: Air
 class AirSide:
     aircraft: list[str]  # one entry per aircraft, its DCS type
     awacs: bool = False
+    penalty: float = 0.0  # quality points lost, e.g. LOADED_PENALTY for a strike flight
 
 
 def air_battle(a: AirSide, b: AirSide, rng: random.Random,
@@ -271,12 +275,13 @@ def air_battle(a: AirSide, b: AirSide, rng: random.Random,
                                                         (b, lost_b, a, lost_a, new_a)):
             alive_t = [i for i in range(len(targets.aircraft)) if i not in t_lost]
             for i, t in enumerate(shooters.aircraft):
-                q = atype(t).a2a
+                q = atype(t).a2a - shooters.penalty
                 if i in s_lost or q < min_q or not alive_t:
                     continue
                 j = rng.choice(alive_t)
                 q_own = q + (cfg.awacs_bonus if shooters.awacs else 0)
-                q_tgt = atype(targets.aircraft[j]).a2a + (cfg.awacs_bonus if targets.awacs else 0)
+                q_tgt = (atype(targets.aircraft[j]).a2a - targets.penalty
+                         + (cfg.awacs_bonus if targets.awacs else 0))
                 if _shot(rng, pk, q_own, q_tgt, cfg):
                     hits.add(j)
         lost_a |= new_a
@@ -298,7 +303,28 @@ SAM_TYPES: dict[str, SamType] = {
     "SA-8": SamType(0.03, 10_000),
     "SA-11": SamType(0.05, 35_000),
     "SA-10": SamType(0.07, 75_000),
+    "Hawk": SamType(0.04, 40_000),
 }
+
+# DCS types that make a formation a SAM site of a SAM_TYPES class (its launchers), and the
+# radars it can't fire without: a SEAD hit takes out one of those.
+SAM_LAUNCHERS: dict[str, str] = {
+    "S_75M_Volhov": "SA-2", "5p73 s-125 ln": "SA-3", "Kub 2P25 ln": "SA-6", "Osa 9A33 ln": "SA-8",
+    "SA-11 Buk LN 9A310M1": "SA-11", "S-300PS 5P85C ln": "SA-10", "S-300PS 5P85D ln": "SA-10", "Hawk ln": "Hawk",
+}
+SAM_RADARS: dict[str, tuple[str, ...]] = {
+    "SA-2": ("SNR_75V",), "SA-3": ("snr s-125 tr",), "SA-6": ("Kub 1S91 str",), "SA-8": ("Osa 9A33 ln",),
+    "SA-11": ("SA-11 Buk SR 9S18M1", "SA-11 Buk LN 9A310M1"), "SA-10": ("S-300PS 40B6M tr",),
+    "Hawk": ("Hawk tr",),
+}
+
+
+def sam_class(composition: dict[str, int]) -> str | None:
+    """The SAM_TYPES class of a site that can fire (a launcher and a radar left), else None."""
+    cls = next((SAM_LAUNCHERS[t] for t, n in composition.items() if n > 0 and t in SAM_LAUNCHERS), None)
+    if cls is None or not any(composition.get(r, 0) > 0 for r in SAM_RADARS.get(cls, ())):
+        return None
+    return cls
 
 
 @dataclass

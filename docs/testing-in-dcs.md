@@ -990,3 +990,23 @@ Anything that looked wrong, especially: the garrison inside buildings or missing
 - **Passed:** El Taebah's garrison spawned and was sited (24, moved up to 50 m). The coalition battalion fought it in DCS and killed all 24 between T+1:28 and T+1:40, and the town was taken at T+2:00 with a coalition garrison in its place. The hourly battle reports came up as messages. The run saved cleanly, and after a restart without `--new` the town was still the coalition's, with its garrison.
 - **Changed during the run:** the garrison spawned in the middle of town, because the edge layout applied only to battalions. Garrisons now stand in strongpoints round the town's edge (estimated from its size), and were on the edge after a restart. A town is now taken as soon as nothing defends it, not at the next hour. Garrison infantry is a mix (riflemen, RPG, machine guns); MANPADS were tried and taken out again (backlog item 8).
 - **Not yet seen in DCS:** the mixed infantry, and battalions deploying on the edge of a threatened town (El Taebah had none).
+
+## Run 24: planned AI flights in DCS (`campaign.server --scenario southern_syria`)
+Single player, FA-18C, about 45 minutes, Immortal on. The planner and the air war are now in the campaign server: both sides plan flights from the war, and the AI flies them. Flights near a player (or a ghost) are in DCS; the rest fly in the engine. Two ghosts: one on Prince Hassan, the Hornets' base, to see ramp starts, and one on El Taebah, at the front, to see missions arrive.
+
+1. `python3 -m campaign.server --new --scenario southern_syria --ghost "Prince Hassan" --ghost 201/35`
+2. Start `campaign-dev/campaign-smoke.miz`. Expect `PLAN blue T+0h: ...` and `PLAN red ...` lines listing missions (CAP, CAS, BAI, SEAD, STRIKE). Open F10 > Other > Campaign > Status: the first lines list the next flights to take off (e.g. `CAS 4: 2x CAS FA-18C_hornet from Prince Hassan, takeoff T+0:20`), and the end has `Air:` and `Planned flights:` lines.
+3. **Ramp starts.** On the F10 map, look at Prince Hassan (147°M, 63 nm from Khalkhalah) when a Hornet flight from there is due. It should appear on the ramp, taxi and take off within about 10 minutes. Expect `spawned fl:blue_..._N` and `takeoff` events in the terminal.
+4. **Missions at the front.** Ctrl+Z to ×4. Watch flights arrive near El Taebah (201°M, 35 nm): CAS and interdiction flights attacking formations, SEAD flights going for SAM sites, CAPs orbiting. Note whether they attack what they were sent at, and whether red fighters come up to meet them.
+5. **Landing.** Follow one flight home on the F10 map (or from the outside view): it should land at its own base and be recovered (`recovered: N aircraft back to the squadron`). A flight whose base DCS doesn't know flies there instead (a warning names it).
+6. Fly yourself too: take off and fly towards El Taebah, so flights spawn around you as they come within 60 nm. Check they appear in sensible places, at sensible altitudes and headings, not on top of each other.
+7. Exit, Ctrl-C. Restart without `--new` and the two `--ghost` options, start the mission: flights should carry on (planned ones still planned, airborne ones in the air where they were).
+
+### What to send back
+Anything that looked wrong: flights stuck on the ground, flying odd routes, attacking the wrong things, landing at the wrong base, or messages that made no sense. I'll read `build/logs/server.log`.
+
+### Results (2026-11-25)
+About 20 minutes (to T+0:54), from a new campaign.
+- **Passed:** both sides planned from the start (blue: CAP over the front, CAS at El Taebah, then strikes on Sayqal, Tha'lah and Khalkhalah; red: CAPs) and planned again each hour. The Status page listed the next flights. Flights spawned on the ramp when due and took off within 2 to 11 minutes: CAP 2 (F-15C, Ramat David), CAP 19 (MiG-29A, Sayqal), SEAD 5 (Hornets, Prince Hassan) and CAS 4 (A-10C, King Hussein Air College). Saves had no errors. Nothing in the plan looked wrong.
+- **Seen:** the first CAPs met over the front. Both MiG-29s were shot down, then both F-15Cs a minute later; the log doesn't say what killed them.
+- **Not yet seen in DCS:** SEAD and CAS flights reaching their targets (the run ended before they got there), landing and recovery, and the restart (step 7).

@@ -267,7 +267,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         await self.connect(e)
         text = e.status_text()
         self.assertIn("CAMPAIGN khalkhalah", text)
-        self.assertIn("Blue CAS: 2x CAS planned at T+5 min", text)
+        self.assertIn("Blue CAS: 2x CAS FA-18C_hornet from Khalkhalah, takeoff T+0:05", text)
         await self.report(e, 0)
         await asyncio.gather(*e.tasks)
         text = e.status_text()
@@ -283,6 +283,28 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         e = Engine(settings(), load_scenario("southern_syria"), mission_call=FakeDCS().call)
         snap = loads(dumps(e.snapshot()))
         self.assertIn("ground_war", snap.extra["systems"])
+
+    async def test_scenario_plans_flights_that_land_at_their_dcs_base(self):
+        from campaign.model import Waypoint
+        sc = load_scenario("southern_syria")
+        e = Engine(settings(), sc, mission_call=FakeMission().call)
+        self.assertEqual([s.name for s in e.systems], ["ground_war", "air_war", "planner"])
+        self.assertIsNotNone(e.air_bubble.on_waypoint)
+        e.state.clock = 60.0
+        for s in e.systems:
+            s.advance(0.0, 60.0)
+        planned = [f for f in e.state.flights.values() if f.state is FlightState.PLANNED]
+        self.assertTrue(planned)
+        f = planned[0]
+        base = f.waypoints[-1].params["base"]
+        e.airbases = {sc.theater.objectives[base].dcs_airbase: {"name": "x", "id": 42, "pos": {"x": 0, "y": 0}}}
+        e.prepare_flight(f)
+        self.assertEqual(f.waypoints[-1].params["airdrome_id"], 42)
+        # A base DCS doesn't know: fly there instead of landing.
+        g = planned[1]
+        e.airbases = {}
+        e.prepare_flight(g)
+        self.assertIsNone(g.waypoints[-1].action)
 
     async def test_save_file_written(self):
         with tempfile.TemporaryDirectory() as d:

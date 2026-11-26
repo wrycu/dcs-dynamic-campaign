@@ -94,11 +94,13 @@ def load_scenario_def(path: Path) -> ScenarioDef:
     if set(rules) - rule_keys:
         raise ScenarioError(f"{path.name}: unknown keys in [rules]: {sorted(set(rules) - rule_keys)}")
     for k, v in (d.get("sides") or {}).items():
-        extra = set(v) - {"name", "countries", "posture", "goal"}
+        extra = set(v) - {"name", "countries", "posture", "goal", "air"}
         if extra:
             raise ScenarioError(f"{path.name}: unknown keys in [sides.{k}]: {sorted(extra)}")
         if v.get("posture", "defend") not in ("attack", "defend"):
             raise ScenarioError(f"sides.{k}.posture must be \"attack\" or \"defend\"")
+        if v.get("air", "defensive") not in ("offensive", "defensive", "cautious"):
+            raise ScenarioError(f"sides.{k}.air must be \"offensive\", \"defensive\" or \"cautious\"")
     for side_key, temps in (rules.get("airbase_defence") or {}).items():
         _side(side_key, "rules.airbase_defence")
         for t in temps:

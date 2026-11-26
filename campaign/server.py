@@ -155,6 +155,7 @@ class Engine:
                                     targets=self.flight_targets)
         self.air = AirSpawner(self.state, self.mission_call, clock=self.now, notify=self._flight_note)
         self.air_bubble = AirBubble(self.state, self.air, cfg, base_pos=self.base_pos, takeoff_for=self.takeoff_for)
+        self.air_bubble.prepare = self.prepare_flight
         self.systems: list[System] = scenario.systems(self)
         self.clock = WarClock()
         extra = snap.extra if snap else {}
@@ -227,6 +228,19 @@ class Engine:
 
     def base_pos(self, sq: Squadron) -> Pos | None:
         return self.airbase_pos(self.dcs_airbase(sq.base_id))
+
+    def prepare_flight(self, f: Flight) -> None:
+        """Before a flight goes into DCS: its LAND waypoint needs DCS's id for its base (planned
+        flights name the base's objective, ``params["base"]``). A base DCS doesn't know: fly there."""
+        for wp in f.waypoints:
+            if wp.action == "LAND" and "airdrome_id" not in wp.params:
+                ab = self.airbases.get(self.dcs_airbase(str(wp.params.get("base", ""))))
+                if ab is not None and "id" in ab:
+                    wp.params["airdrome_id"] = int(ab["id"])
+                else:
+                    log.warning("%s: no DCS airbase for %s; it flies there instead of landing", f.id,
+                                wp.params.get("base"))
+                    wp.action = None
 
     async def takeoff_for(self, f: Flight) -> Takeoff:
         name = self.dcs_airbase(self.state.squadrons[f.squadron_id].base_id)
@@ -438,16 +452,29 @@ class Engine:
         lines = [f"CAMPAIGN {self.scenario.name}: {self.summary()}",
                  f"Flights spawn within {cfg.air_spawn / NM:.0f} nm, leave DCS beyond {cfg.air_despawn / NM:.0f} nm; "
                  f"formations spawn within {cfg.ground_spawn / NM:.0f} nm (SAMs further)."]
-        for f in st.flights.values():
+        flights = list(st.flights.values())
+        if len(flights) > 12:
+            # Many (the planner): those in DCS, and the next few to take off.
+            soon = sorted((f for f in flights if f.state is FlightState.PLANNED), key=lambda f: f.takeoff_time)[:6]
+            shown_f = [f for f in flights if f.spawn is SpawnState.SPAWNED] + soon
+        else:
+            shown_f = flights
+        for f in shown_f:
             where = "[DCS]" if f.spawn is SpawnState.SPAWNED else "[engine]"
             if f.state is FlightState.PLANNED:
-                lines.append(f"{f.callsign}: {f.aircraft}x {f.mission} planned at T+{int(f.takeoff_time) // 60} min")
+                sq = st.squadrons.get(f.squadron_id)
+                base = self.scenario.theater.objectives.get(sq.base_id) if sq and self.scenario.theater else None
+                what = f" {sq.aircraft_type} from {base.name if base else sq.base_id}" if sq else ""
+                t = int(f.takeoff_time)
+                lines.append(f"{f.callsign}: {f.aircraft}x {f.mission}{what}, takeoff T+{t // 3600}:{t // 60 % 60:02d}")
                 continue
             alt = f" {f.alt_m / 0.3048:,.0f} ft" if f.alt_m is not None and f.state in AIRBORNE else ""
             orbit = (f", orbiting {int(f.hold_until - st.clock) // 60} min more"
                      if f.hold_until is not None and f.state in AIRBORNE else "")
             pos = f" {self.bra(f.pos)}{alt}" if f.state in AIRBORNE or f.spawn is SpawnState.SPAWNED else ""
             lines.append(f"{f.callsign}: {f.aircraft}x {f.mission} {f.state.name.lower()} {where}{pos}{orbit}")
+        if len(shown_f) < len(flights):
+            lines.append(f"(and {len(flights) - len(shown_f)} more flights not in DCS)")
         alive = [u for u in st.ground_units.values() if strength(u) > 0]
         units = [u for u in alive if u.role is not GroundRole.GARRISON]
         shown = units if len(units) <= 15 else [u for u in units if u.spawn is SpawnState.SPAWNED]

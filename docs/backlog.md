@@ -31,7 +31,9 @@ To decide:
 
 ## 2. Mission planning (ATO) and choosing a flight
 
-Nothing plans flights yet: the demos build them by hand. Needed:
+**Design note: [planner](planner.md).** The air war for flights not in DCS and both sides' planners
+are built (2026-11-25): offline with `python3 -m campaign.war`, and in the campaign server for
+Southern Syria (first DCS run is Run 24). Players can't claim flights yet. Needed:
 
 - **Planner.** Each side looks at the war (front line, threats, targets, its own aircraft) and
   builds an ATO each cycle: packages (strike, SEAD, escort, CAP, CAS…) with flights, routes,

@@ -3,15 +3,18 @@
 The starting state comes from the scenario file on the Syria map layer (campaign/scenario_file.py):
 who holds which objective, the squadrons, and the ground order of battle. The ground war
 (campaign/ground_war.py) runs from the start: the coalition attacks towards Damascus, Syria holds
-and counterattacks. The planner (item 2) comes next. On the campaign server, the formations spawn
-around players like any others, and Status shows the front and the battles.
+and counterattacks. Both sides' planners (campaign/planner.py) plan flights from it, and the air war
+(campaign/air_war.py) resolves those not in DCS. On the campaign server, formations and flights
+spawn around players like any others, and Status shows the front, the battles and the next flights.
 """
 from __future__ import annotations
 
 import logging
 
+from campaign.air_war import AirWar
 from campaign.ground_war import GroundWar, sides_from
 from campaign.model import CampaignState, Side
+from campaign.planner import Planner
 from campaign.scenario_file import build_state, load_scenario_def, scenario_path, summary
 from campaign.server import Engine, Scenario, System
 
@@ -37,7 +40,16 @@ class SouthernSyria(Scenario):
         def news(text: str) -> None:
             log.info("WAR %s %s", engine.clock_text(), text)
             engine.say(text, duration=10, log_it=False)
-        return [GroundWar(engine.state, self.theater, sides_from(self.sd), notify=news, call=engine.mission_call)]
+        def air_news(text: str) -> None:   # far from players: the log only
+            log.info("AIR %s %s", engine.clock_text(), text)
+
+        sides = sides_from(self.sd)
+        postures = {s: o.air_posture() for s, o in sides.items()}
+        ground = GroundWar(engine.state, self.theater, sides, notify=news, call=engine.mission_call,
+                           in_play=self.built.in_play)
+        air = AirWar(engine.state, self.theater, postures, notify=air_news)
+        engine.air_bubble.on_waypoint = air.on_waypoint
+        return [ground, air, Planner(engine.state, self.theater, postures, ground, air)]
 
     async def setup(self, engine: Engine) -> None:
         for line in summary(self.sd, self.built).splitlines():
