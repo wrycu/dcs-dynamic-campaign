@@ -105,7 +105,7 @@ here; "cautious" or "offensive" elsewhere), so the same planner can play other k
   on SEAD. Altitudes are per mission: CAS 15,000–20,000 ft, strike 20,000–25,000 ft, CAP
   25,000 ft or more. Speeds are per leg (item 5, done).
 - **Times:** the TOT is chosen and the rest worked back from cruise speeds. Players get a
-  cold-start allowance (about 20 minutes from spawn to takeoff).
+  start-up allowance before takeoff: about 5 minutes for a hot start, 20 for a cold one.
 - **Loadouts:** a table of mission → stock loadout name per aircraft type, from
   `data/payloads.json`, e.g. CAS F/A-18C "Mk-82*4, AIM-9*2, …".
 
@@ -140,17 +140,41 @@ Without this part the AI's sorties change nothing, and the war still stalls.
 - **On claiming:**
   - the flight is held for players, so the AI won't fly it;
   - the player gets a message briefing: the route as bearings, distances, altitudes and times
-    (nm, ft, magnetic), the target, the TOT, the threats and the loadout;
-  - the engine writes the cartridge (Hornet) and kneeboard pages (route card, target and
-    threats; item 39).
-- **Into the jet:** the mission has a pool of Client slots: a few jets of each player type parked
-  cold at each blue player base. Claiming a flight assigns a free slot of its type at its base; the
-  server moves the player in (`force_player_slot`) and the client script, if they have it, puts
-  them in the cockpit (otherwise they click Fly). The Hooks refuse anyone else picking a pool slot.
-  The flight's other aircraft are the AI's (wingmen), or other players' slots.
-- **Deadline:** a seat can be claimed until 10 minutes before takeoff. After that, an unclaimed
-  flight is flown by the AI (decided). A half-claimed flight flies with only its players, and its
-  other aircraft go back to the squadron.
+    (nm, ft, magnetic), the target, the TOT, the threats and the loadout. The cartridge and
+    kneeboard pages are already in the mission (below).
+- **Into the jet: the mission is rebuilt for each session** (decided 2026-11-25; P4 proved the
+  rebuild). Every planned blue flight from a player-flyable squadron that takes off during the
+  session gets its own group of Client slots in the .miz, one per seat, named for the flight
+  (`Springfield 1-1`, `1-2`), parked at its base, with:
+  - a hot start (engines running) by default; `player_start = "cold"` in `[server]` parks them
+    cold instead (decided 2026-11-25);
+  - the planned loadout (no general-purpose pool, no rearming);
+  - the flight's route as the group's waypoints;
+  - its cartridge in the .miz (`DTC/<flight>.dtc`, set to load itself on spawn), so remote players
+    get it with the mission. Hornet first; other types as `dtc.py` learns them;
+  - kneeboard pages per flight (route card, target, threats) in `KNEEBOARD/<type>/IMAGES` (P5).
+    A mission can only give pages per aircraft type, not per unit, so every Hornet carries the
+    pages of all the session's Hornet flights: an index first, then each flight by takeoff time.
+  The slots' airbases need their aircraft in the warehouse stock, or DCS greys the slots out (Run 25);
+  the probe sets them unlimited, the real build will stock what the campaign's squadrons have.
+  Claiming moves the player into their seat (`force_player_slot`; the client script, if they have
+  it, puts them in the cockpit). The Hooks refuse a seat to anyone who hasn't claimed it.
+- **Seats players don't take are AI** (decided 2026-11-25): players may fly the whole flight; any
+  seat no player claimed by the deadline is flown by the AI with them. A slot's Client/AI split is
+  fixed in the .miz, so a missing wingman is a separate AI group spawned beside the players and
+  told to follow their lead. Run 25: in the air, beside the lead, it keeps formation. From the ramp
+  it taxis out and holds on the runway for the lead, blocking it for everyone else; so a wingman
+  for an empty seat is parked switched off (uncontrolled) next to the players, and started when
+  the lead starts to taxi: it starts up, taxis and takes off behind them (to confirm in DCS). On the ramp,
+  spots must fit the aircraft (a Hornet in a small shelter was destroyed); `campaign/parking.py`
+  checks them as the Mission Editor does, for every AI ramp start. The Client slots in the .miz
+  need the same check when the build gives them parking spots.
+- **Deadline:** a seat can be claimed until 10 minutes before takeoff. Then a flight with no
+  players is flown by the AI as now (its Client slots stay empty), and a flight with players gets
+  AI for its empty seats.
+- **Flights planned after the rebuild** have no slots until the next one. So at each rebuild the
+  planner fixes blue's player-flyable flights for the whole session; the hourly cycle still adds
+  AI-only flights and red's.
 - **Not in this step:** joining a flight already airborne (needs air-start slots in the .miz,
   P2), editing the plan (item 26), building your own package (item 27).
 
@@ -165,27 +189,24 @@ Each step is tested offline first, then in DCS:
    mix of missions, and the plan reacting to battles.
 3. **AI flights in DCS:** planned flights spawn near players and fly their missions (mostly
    exists). A DCS run.
-4. **Players:** the F10 list, claiming, the briefing message, slot matching, then cartridges and
-   kneeboard pages. A DCS run with the FA-18C.
-5. **Unclaimed flights to the AI** and the deadlines.
+4. **Players:** build the session's .miz (a Client group per planned player flight, with its
+   loadout, route, cartridge and kneeboard pages), the F10 list, claiming, the briefing message and
+   moving the player into their seat. First a DCS probe: a cartridge in the .miz loading itself in
+   multiplayer, and an AI group following a Client lead. Then a DCS run with the FA-18C.
+5. **Empty seats and unclaimed flights to the AI**, and the deadlines.
 
 ## Questions to decide
 
-1. **Cartridges and kneeboards on a dedicated server** (deferred, 2026-11-24). Only the server can
-   write files, so a remote player can't get them yet. Options: write them to the server's own
-   `Saved Games` (works when the host plays on the server PC, as now); a small download page
-   served by the engine (the first piece of the war overview, item 3); or the opt-in client script.
-2. **The Client slot pool:** how many jets per type and base, and their loadout. A Client slot's
-   loadout is fixed in the .miz, so either the pool carries a general-purpose load and players
-   rearm from the ground crew to the planned one, or the mission is rebuilt each session (P4) with
-   the pool loaded for the flights planned then. Proposal: general-purpose now, rebuilt later.
-3. **Wingmen:** a player who claims a 2-ship lead flies with an AI wingman in their group, or the
-   wingman is a separate AI flight following them. A Client slot's group is fixed in the .miz, so
-   an AI wingman in the same group means every pool slot has one. Needs a quick DCS check.
+1. **When a session's mission is rebuilt:** only between sessions (the war carries on while nobody
+   is on), or also during one, which puts everyone back in the slot list. Proposal: between
+   sessions, with the session's player flights fixed at the rebuild.
 
 Decided (2026-11-24): 3–4 blue flights an hour is enough; red fights defensively by attrition
 (intercepts where blue is weak, supports its counterattacks, attacks exposed blue units; no
 sweeps or raids into blue's airspace); the AI flies unclaimed flights.
+Decided (2026-11-25): the mission is rebuilt each session with a Client group per planned player
+flight carrying its loadout, cartridge and kneeboard pages (this also gets them to remote players
+on a dedicated server); players may fly a whole flight, and the AI fills the seats they don't.
 
 ## Built so far (2026-11-25)
 

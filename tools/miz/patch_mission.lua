@@ -19,6 +19,14 @@ params.lua returns a table:
                   aircraft there, from the warehouse stock, which starts empty), hot start allowed
   parked_client   { name =, airdrome_id =, x =, y = }: add a one-ship Client copy of the first player
                   group, parked cold at that airdrome (DCS picks the spot), or nil
+  client_groups   list of { name =, airdrome_id =, x =, y =, start = "hot" or "cold" (default hot),
+                  waypoints = { { x =, y =, alt = }, ... },
+                  units = { { name =, skill =, dtc = <cartridge name> or nil }, ... } }: groups cloned from
+                  the first player group, parked at that airdrome (DCS picks the spots), engines
+                  running (hot) or not (cold). Their airdromes get unlimited aircraft, or DCS greys
+                  the slots out for want of stock. A unit
+                  with skill "Client" is a player slot, any other skill is AI; ``dtc`` names a cartridge
+                  in the .miz's DTC/ folder that loads itself when the unit spawns. Or nil.
   combined_arms   { slots =, units = { { name =, type =, x =, y =, heading = }, ... } }: that many
                   blue Tactical Commander and JTAC/Operator slots, and one-unit blue ground groups
                   players can control (playerCanDrive), or nil
@@ -206,6 +214,56 @@ if pc then
   list[#list + 1] = g
 end
 
+-- Client groups for planned flights (P20): seats are Client slots or AI, each Client unit with its
+-- own cartridge (unit.DTC, as the Mission Editor writes it; the .dtc file is in the .miz's DTC/).
+for gi, cg in ipairs(params.client_groups or {}) do
+  local src = players[1]
+  local ctry
+  for _, side in pairs(mission.coalition) do
+    for _, c in pairs(side.country or {}) do
+      for _, g in pairs((c.plane or {}).group or {}) do if g == src then ctry = c end end
+    end
+  end
+  assert(ctry, "client_groups: the first player group is not a plane group")
+  local gmax, umax = max_ids()
+  local g = deep_copy(src)
+  local proto = g.units[1]
+  g.units = {}
+  for i, spec in ipairs(cg.units) do
+    local u = deep_copy(proto)
+    u.unitId, u.name, u.skill = umax + i, spec.name, spec.skill
+    u.x, u.y, u.alt, u.speed, u.heading = cg.x, cg.y, 0, 0, 0
+    u.parking, u.parking_id = nil, nil
+    if type(u.callsign) == "table" then u.callsign[2], u.callsign[3], u.callsign.name = gi + 1, i, nil end
+    u.onboard_num = string.format("%03d", (gi + 1) * 10 + i)
+    u.DTC = spec.dtc and { AutoLoad = true, Cartridges = { [1] = { name = spec.dtc, default = true } } } or nil
+    g.units[i] = u
+  end
+  g.groupId, g.name = gmax + 1, cg.name
+  g.x, g.y = cg.x, cg.y
+  g.uncontrolled, g.lateActivation = false, nil
+  local hot = (cg.start or "hot") == "hot"
+  assert(hot or cg.start == "cold", "client_groups: start must be hot or cold")
+  local points = { [1] = {
+    alt = 0, alt_type = "BARO",
+    action = hot and "From Parking Area Hot" or "From Parking Area",
+    type = hot and "TakeOffParkingHot" or "TakeOffParking",
+    airdromeId = cg.airdrome_id, x = cg.x, y = cg.y, speed = 0, ETA = 0, ETA_locked = true,
+    formation_template = "", speed_locked = true,
+    task = { id = "ComboTask", params = { tasks = {} } },
+  } }
+  for _, wp in ipairs(cg.waypoints or {}) do
+    points[#points + 1] = {
+      alt = wp.alt, alt_type = "BARO", action = "Turning Point", type = "Turning Point",
+      x = wp.x, y = wp.y, speed = 220, ETA = 0, ETA_locked = false, formation_template = "",
+      speed_locked = true, task = { id = "ComboTask", params = { tasks = {} } },
+    }
+  end
+  g.route = { points = points }
+  local list = ctry.plane.group
+  list[#list + 1] = g
+end
+
 -- Combined Arms for blue (P19 part 4: a soldier the player walks, whose position the server knows):
 -- open Tactical Commander and JTAC/Operator slots for blue, and add one blue soldier players can control.
 local ca = params.combined_arms
@@ -278,6 +336,13 @@ for _, id in ipairs(params.dynamic or {}) do
   dap.aircrafts = {}  -- empty stock; the engine sets it at runtime
   dap.dynamicSpawn = true
   dap.allowHotStart = true
+end
+-- A Client slot at an airdrome with limited aircraft and none of its type in stock is greyed out in
+-- the slot list (Run 25), so airdromes with client groups get unlimited aircraft.
+for _, cg in ipairs(params.client_groups or {}) do
+  local cap = warehouses.airports[cg.airdrome_id]
+  assert(cap, "warehouses has no airport " .. tostring(cg.airdrome_id))
+  cap.unlimitedAircrafts = true
 end
 write_table(params.warehouses_out, "warehouses", warehouses)
 

@@ -68,6 +68,9 @@ def load_bubble_config(path: Path, base: BubbleConfig | None = None) -> BubbleCo
 
 # ---------- [server] ----------
 
+PLAYER_STARTS = ("hot", "cold")
+
+
 @dataclass
 class ServerConfig:
     """How the campaign server runs (campaign/server.py)."""
@@ -77,6 +80,7 @@ class ServerConfig:
     autosave_s: float = 30.0        # real seconds between saves while something changes
     status_s: float = 60.0          # real seconds between status lines on the console
     slot_sides: list[int] = field(default_factory=lambda: [0, 2])   # spectators and blue (PvE)
+    player_start: str = "hot"       # players' flights start on the ramp "hot" (engines running) or "cold"
 
     def __post_init__(self) -> None:
         if not 0 < self.port < 65536:
@@ -85,10 +89,13 @@ class ServerConfig:
             raise ValueError("autosave_s and status_s must be positive")
         if not self.slot_sides or any(s not in (0, 1, 2) for s in self.slot_sides):
             raise ValueError("slot_sides must list sides 0 (spectators), 1 (red) or 2 (blue)")
+        if self.player_start not in PLAYER_STARTS:
+            raise ValueError(f"player_start must be one of {', '.join(PLAYER_STARTS)}")
 
 
 SERVER_TYPES: dict[str, type | tuple[type, ...]] = {
     "host": str, "port": int, "save": str, "autosave_s": (int, float), "status_s": (int, float), "slot_sides": list,
+    "player_start": str,
 }
 
 

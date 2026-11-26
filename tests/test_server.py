@@ -83,14 +83,17 @@ class TestScenario(Khalkhalah):
 class SettingsTests(unittest.TestCase):
     def test_shipped_config(self):
         s = settings()
-        self.assertEqual((s.server.port, s.server.slot_sides), (7341, [0, 2]))
+        self.assertEqual((s.server.port, s.server.slot_sides, s.server.player_start), (7341, [0, 2], "hot"))
         self.assertEqual(s.bubble.ground_spawn, 20 * NM)
 
     def test_defaults_without_a_file(self):
         self.assertEqual(load_settings(None).server.save, "build/saves/campaign.json")
+        self.assertEqual(load_settings(None).server.player_start, "hot")
+        self.assertEqual(server_config({"player_start": "cold"}).player_start, "cold")
 
     def test_errors(self):
-        for bad in ({"prot": 1}, {"port": "7341"}, {"port": 0}, {"slot_sides": [3]}, {"autosave_s": True}):
+        for bad in ({"prot": 1}, {"port": "7341"}, {"port": 0}, {"slot_sides": [3]}, {"autosave_s": True},
+                    {"player_start": "warm"}, {"player_start": 1}):
             with self.assertRaises(SettingsError, msg=bad):
                 server_config(bad)
         with tempfile.TemporaryDirectory() as d:

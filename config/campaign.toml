@@ -7,6 +7,7 @@ save = "build/saves/campaign.json"   # loaded at startup, written while running 
 autosave_s = 30           # save this often (real time) while anything changes
 status_s = 60             # print a status line this often (real time)
 slot_sides = [0, 2]       # sides players may take: 0 spectators, 1 red, 2 blue (PvE: blue only)
+player_start = "hot"      # players' flights start on the ramp "hot" (engines running) or "cold"
 
 [bubble]
 # Ordinary ground formations exist in DCS while a player is within these distances.

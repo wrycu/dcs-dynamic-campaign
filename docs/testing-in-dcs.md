@@ -1010,3 +1010,26 @@ About 20 minutes (to T+0:54), from a new campaign.
 - **Passed:** both sides planned from the start (blue: CAP over the front, CAS at El Taebah, then strikes on Sayqal, Tha'lah and Khalkhalah; red: CAPs) and planned again each hour. The Status page listed the next flights. Flights spawned on the ramp when due and took off within 2 to 11 minutes: CAP 2 (F-15C, Ramat David), CAP 19 (MiG-29A, Sayqal), SEAD 5 (Hornets, Prince Hassan) and CAS 4 (A-10C, King Hussein Air College). Saves had no errors. Nothing in the plan looked wrong.
 - **Seen:** the first CAPs met over the front. Both MiG-29s were shot down, then both F-15Cs a minute later; the log doesn't say what killed them.
 - **Not yet seen in DCS:** SEAD and CAS flights reaching their targets (the run ended before they got there), landing and recovery, and the restart (step 7).
+
+## Run 25: cartridges in the mission, and AI wingmen (`tools.wingman_probe`), proof P20
+Host from your DCS (MULTIPLAYER > New server), FA-18C, about 30 minutes. The jets start hot (engines running), as player flights will; `--cold` parks them cold instead. For the mission rebuilt each session ([planner](planner.md) section 5): each Client unit's cartridge is built into the .miz and should load itself, and seats players don't take are AI.
+
+1. `python3 -m tools.wingman_probe`. It builds `campaign-dev/campaign-p20.miz`. Host it.
+2. **Cartridge, mixed group.** Take **P20 Mixed** (Enfield 2-1; Enfield 2-2 is AI in your group). Open the DTC window (RShift+RCtrl+K): is cartridge `p20_mixed` listed and loaded? Count the waypoints on the HSI: **4** (east of the field) means the cartridge loaded itself on a hot start, **2** (north) means only the mission route. Does your AI #2 spawn beside you with its engines running, and answer F1 wingman commands? Take off and see whether it joins you.
+3. **Cartridge, solo group.** Leave the slot, take **P20 Solo** (Enfield 3-1). The same check, expecting **6** waypoints (south) and cartridge `p20_solo`.
+4. **Separate wingman, ramp.** Still on the ramp in P20 Solo: F10 > Other > Campaign > *Wingman on the ramp, Follow*. Where does it park? It spawns hot: does it take off before you, wait for you, or join you once you're airborne? Then *Remove wingman* and try *Wingman on the ramp, Escort*.
+5. **Separate wingman, air.** Airborne, at about 15,000 ft: *Wingman in the air, Follow*. Does it hold formation through turns and climbs? Then *Wingman in the air, Escort*: the same checks. (Whether an escort engages enemy fighters is left for a campaign run.)
+6. Ctrl-C the probe.
+
+### What to send back
+For each step: the waypoint count and whether the DTC window showed the cartridge; how each wingman behaved (positions, formation, takeoff timing, whether it fought). The probe prints births, takeoffs and losses of P20 aircraft.
+
+### Results (2026-11-26, first try)
+Hosted from your DCS, hot start.
+- **Changed before it worked:** the Client slots were greyed out in the slot list. Khalkhalah had limited aircraft and no Hornets in stock; the probe now gives airdromes with Client groups unlimited aircraft (the real build must stock them). Board numbers were the same for both groups (101) and are now unique.
+- **Passed:** a cartridge built into the .miz loads itself on a hot start: P20 Mixed showed `p20_mixed` loaded with 4 waypoints, P20 Solo `p20_solo` with 6. The AI #2 in a Client group spawned beside the player and answered wingman commands normally. A separate AI wingman spawned in the air beside the player with Follow stayed with them and kept formation.
+- **Failed:** the ramp wingman spawned in an empty hardened shelter on the far side of the field, too small for a Hornet (part of the wing through the wall), and was destroyed at once, three times (`dcs.log`: engine startup, then "ai abort mission" 5 s later, then ejection). Players have hit the same with some slots. DCS's parking list doesn't give sizes, and the campaign server preferred shelters for fighters. Now spots are checked as the Mission Editor does: the Hooks `stands` command reads each stand's width, length and height, the mission `type_size` query the aircraft's, and only spots it fits are used (no shelters if the sizes can't be read). The probe prints what it chose. To fly again: step 4, after copying the new `campaign_hooks.lua` into Saved Games.
+- **Second try (ramp wingman):** the Hooks read Khalkhalah's stands with their sizes (55 stands; the Hornet's box is 11.8 m span, 17.1 m long, 5.5 m high), and 32 of the 56 free spots fit it. The wingman spawned hot in an open spot 99 m from the player, and wasn't lost.
+- **Ramp wingman, Follow:** both it and the player were in open spots, not shelters. It taxied to the runway, lined up, and held there waiting for the player instead of taking off.
+- **It blocks the runway** while it holds (Khalkhalah's runway is narrow): the player, other players and AI flights at that base can't use it until the player passes.
+- **Not reported yet:** whether it takes off after the player and joins up, and the Escort variants. Next: *Wingman parked, starts when you move*: parked cold and switched off, told to Follow, and started when the player starts to taxi (faster than about 4 kt). Does it start up, taxi and take off behind the player, and join?

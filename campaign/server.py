@@ -41,6 +41,7 @@ from .bridge import Bridge, BridgeError, Connection
 from .bubble import NM, attack_targets, strength
 from .flight_spawn import Takeoff
 from .ghosts import Ghosts
+from .parking import FIGHTER_SPOTS, Size, Stand, size_from, stands_from, usable_spots
 from .model import CampaignState, Flight, FlightState, GroundRole, GroundUnit, Pos, SpawnState, Squadron, Theater
 from .persist import Autosave, SaveError, Snapshot, load
 from .protocol import Envelope, Hello, Src, as_list
@@ -51,8 +52,6 @@ log = logging.getLogger("campaign")
 
 DEFAULT_CONFIG = Path("config/campaign.toml")
 DEFAULT_LOG = Path("build/logs/server.log")
-# Parking spot types a fighter fits (Term_Type in DCS's parking list), best first.
-FIGHTER_SPOTS = (68, 104, 72)
 
 
 class System:
@@ -167,6 +166,9 @@ class Engine:
             s.restore((extra.get("systems") or {}).get(s.name) or {})
         self.runs = snap.runs if snap else {}
         self.airbases: dict[str, dict] = {}     # DCS airbase name -> {name, id, pos, alt, ...}
+        self._stands: dict[int, list[Stand]] = {}   # airdrome id -> its parking stands with sizes
+        self._sizes: dict[str, Size] = {}           # aircraft type -> its size
+        self._no_stands: set[int] = set()           # airdromes whose stands couldn't be read (warned once)
         self.players: list[dict] = []           # telemetry "players" entries
         self.model_t: float | None = None       # DCS model time of the latest telemetry
         self.exits: dict[str, Flight] = {}      # flights that reached an EXIT waypoint, for the next tick
@@ -242,16 +244,40 @@ class Engine:
                                 wp.params.get("base"))
                     wp.action = None
 
+    async def stands_at(self, airdrome_id: int) -> list[Stand] | None:
+        """The airdrome's parking stands with their sizes (Hooks), or None if they can't be read."""
+        if airdrome_id not in self._stands:
+            try:
+                self._stands[airdrome_id] = stands_from(await self.hooks_call("stands", {"airdrome_id": airdrome_id}))
+            except (BridgeError, asyncio.TimeoutError, KeyError, TypeError, ValueError) as e:
+                if airdrome_id not in self._no_stands:
+                    self._no_stands.add(airdrome_id)
+                    log.warning("parking sizes at airdrome %s unknown (%s): not using its shelters", airdrome_id, e)
+                return None
+        return self._stands[airdrome_id]
+
+    async def type_size(self, aircraft_type: str) -> Size | None:
+        if aircraft_type not in self._sizes:
+            try:
+                self._sizes[aircraft_type] = size_from(
+                    await self.mission_call("query", {"what": "type_size", "type": aircraft_type}))
+            except (BridgeError, asyncio.TimeoutError, KeyError, TypeError, ValueError) as e:
+                log.warning("size of %s unknown (%s): not using shelters for it", aircraft_type, e)
+                return None
+        return self._sizes[aircraft_type]
+
     async def takeoff_for(self, f: Flight) -> Takeoff:
-        name = self.dcs_airbase(self.state.squadrons[f.squadron_id].base_id)
+        sq = self.state.squadrons[f.squadron_id]
+        name = self.dcs_airbase(sq.base_id)
         ab = self.airbases.get(name)
         if ab is None:
             raise ValueError(f"no airbase {name!r} in DCS")
         res = await self.mission_call("query", {"what": "parking", "airbase": name, "free_only": True})
-        spots = [s for s in as_list(res.get("spots")) if s.get("type") in FIGHTER_SPOTS]
+        spots = usable_spots(as_list(res.get("spots")), await self.stands_at(int(ab["id"])),
+                             await self.type_size(sq.aircraft_type))
         spots.sort(key=lambda s: (FIGHTER_SPOTS.index(s["type"]), s.get("dist_rw") or 0))
         if len(spots) < f.aircraft:
-            raise ValueError(f"only {len(spots)} free fighter parking spots at {name}")
+            raise ValueError(f"only {len(spots)} free parking spots at {name} that {sq.aircraft_type} fits")
         return Takeoff(airdrome_id=int(ab["id"]), pos=Pos(ab["pos"]["x"], ab["pos"]["y"]),
                        elev_m=float(ab.get("alt") or 0.0),
                        parking=[(int(s["term"]), Pos(s["pos"]["x"], s["pos"]["y"])) for s in spots[:f.aircraft]])

@@ -774,9 +774,11 @@ function commands.query(d)
     if not g or not g:isExist() then return { exists = false } end
     local units = {}
     for _, u in ipairs(g:getUnits()) do
-      units[#units + 1] = { name = u:getName(), type = u:getTypeName(), life = u:getLife(), pos = pos2(u:getPoint()) }
+      local st = unit_state(u)
+      units[#units + 1] = { name = u:getName(), type = u:getTypeName(), life = u:getLife(), pos = pos2(u:getPoint()),
+                            alt = u:getPoint().y, hdg = st.hdg, spd = st.spd }
     end
-    return { exists = true, units = units }
+    return { exists = true, id = tonumber(g:getID()), units = units }
   elseif d.what == "airbase" then
     local ab = Airbase.getByName(d.airbase)
     if not ab then return { exists = false } end
@@ -793,6 +795,12 @@ function commands.query(d)
                             dist_rw = s.fDistToRW, occupied = s.TO_AC and true or false }
     end
     return { spots = spots }
+  elseif d.what == "type_size" then
+    -- An aircraft type's size from its bounding box (metres): span, length, height.
+    local desc = Unit.getDescByName(d.type)
+    if not desc or not desc.box then error("no description for type " .. tostring(d.type)) end
+    local b = desc.box
+    return { span = b.max.z - b.min.z, length = b.max.x - b.min.x, height = b.max.y - b.min.y }
   elseif d.what == "warehouse" then
     -- Aircraft stock at an airbase, for the given types.
     local ab = Airbase.getByName(d.airbase)

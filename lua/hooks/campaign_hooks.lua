@@ -16,6 +16,9 @@ What it does:
   * Puts players into aircraft (`spawn_for`, `force_slot`) and reports the server's frame times
     (`frame_stats`), for proof P19. Talks to the optional client script (`client_rpc`,
     `client_hello`; lua/client/campaign_client.lua).
+  * Lists an airdrome's parking stands with their sizes (`stands`), as the Mission Editor reads
+    them, so the engine only parks aircraft where they fit (Run 25: a Hornet spawned in a shelter
+    too small for it was destroyed).
 
 Optional: define a global CampaignHooksConfig table before this file loads to override `defaults`.
 
@@ -342,6 +345,28 @@ function commands.spawn_for(d)
   local ok, res = pcall(create, spawn)
   if not ok then error("create_client_aircraft: " .. tostring(res)) end
   return { result = res }
+end
+
+-- Parking stands of an airdrome with the sizes the Mission Editor checks before it parks an aircraft
+-- (me_parking.lua). data: { airdrome_id }. Returns { stands = { { index, x, y, shelter,
+-- airplanes, helicopters, width, length, height }, ... } }; sizes in metres, height may be nil.
+local has_terrain, Terrain = pcall(require, "terrain")
+
+function commands.stands(d)
+  if not has_terrain then error("terrain module not available in the Hooks: " .. tostring(Terrain)) end
+  local airdromes = Terrain.GetTerrainConfig("Airdromes") or {}
+  local a = airdromes[tonumber(d.airdrome_id)]
+  if not a or not a.roadnet then error("no roadnet for airdrome " .. tostring(d.airdrome_id)) end
+  local list = Terrain.getStandList(a.roadnet, { "SHELTER", "FOR_HELICOPTERS", "FOR_AIRPLANES", "WIDTH", "LENGTH", "HEIGHT" })
+  local out = {}
+  for _, v in pairs(list or {}) do
+    local p = v.params or {}
+    local function num(k) return tonumber(p[k]) end
+    out[#out + 1] = { index = v.crossroad_index, x = v.x, y = v.y, shelter = (num("SHELTER") or 0) ~= 0,
+                      airplanes = (num("FOR_AIRPLANES") or 0) ~= 0, helicopters = (num("FOR_HELICOPTERS") or 0) ~= 0,
+                      width = num("WIDTH"), length = num("LENGTH"), height = num("HEIGHT") }
+  end
+  return { stands = out }
 end
 
 -- P19 part 3: talk to the optional client script (lua/client/campaign_client.lua) over the stock
