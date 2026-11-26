@@ -1033,3 +1033,36 @@ Hosted from your DCS, hot start.
 - **Ramp wingman, Follow:** both it and the player were in open spots, not shelters. It taxied to the runway, lined up, and held there waiting for the player instead of taking off.
 - **It blocks the runway** while it holds (Khalkhalah's runway is narrow): the player, other players and AI flights at that base can't use it until the player passes.
 - **Not reported yet:** whether it takes off after the player and joins up, and the Escort variants. Next: *Wingman parked, starts when you move*: parked cold and switched off, told to Follow, and started when the player starts to taxi (faster than about 4 kt). Does it start up, taxi and take off behind the player, and join?
+
+## Run 26: a war map in a native DCS window (`tools.warmap_probe`), proof P21
+Host from your DCS (MULTIPLAYER > New server), about 15 minutes. The opt-in client script (version 3) opens a window with DCS's own map widget, the one Instant Action's editor and the in-game DTC manager use, and draws a made-up war around Khalkhalah on it. It now also works for the host of a server hosted from DCS: the Hooks call it directly, since DCS can't send RPC to itself.
+
+1. Install the new Hooks and client scripts, then restart DCS (both load at DCS start):
+   ```bash
+   cp lua/hooks/campaign_hooks.lua lua/client/campaign_client.lua "$SG/Scripts/Hooks/"
+   ```
+2. `python3 -m tools.warmap_probe`. Host `campaign-dev/campaign-p20.miz` (any mission works). On load the probe should print `CLIENT player id 1 has the client script (version 3)`.
+3. **Open it.** Take a slot (or stay a spectator) and type `-map` in chat. Does a window open with DCS's terrain map, centred east of Khalkhalah? On it, look for:
+   - blue and red shaded ground either side of a front line;
+   - three red tank symbols facing three blue ones along the front;
+   - a battle label and marker, and the Khalkhalah airbase symbol;
+   - an SA-6 with a dashed, shaded ring and an SA-10 with a solid red ring;
+   - Enfield 1's dashed yellow route with a fighter symbol on it, and Colt 2's dotted blue route;
+   - the side panel's text.
+   Which are missing or look wrong?
+4. **Use it.** Drag to pan (left or right button), wheel to zoom. Click a symbol: does its details text appear in the panel? Try the Map, Terrain and Satellite buttons, and *Back to the front*.
+5. **Show and hide.** Close it, then Ctrl+Shift+F8 twice: does it come back and go again? Do this in the cockpit too. Does the cockpit still take the mouse and keys while the map is hidden, and while it's open?
+6. **Refresh.** `-map move` a few times: does the front move west without your view jumping, and without a flicker? `-map live 2` moves Enfield 1 every 2 s; watch your frame rate with the map open and closed, then `-map off`.
+7. If you fly VR: is the window usable there at all?
+8. Ctrl-C the probe.
+
+### What to send back
+The probe's `MAP` lines: each step, then `shown in N ms: ...`, with counts by kind and any `FAILED` parts. Also its `CLICK` lines, and what you saw for steps 3 to 7. If the window never opened, send the `CAMPAIGN-CLIENT` lines from `dcs.log`. A screenshot of the map helps most.
+
+### Results (2026-11-26, first try)
+Hosted from your DCS (2.9.32, which had reset `MissionScripting.lua`; re-applied the one-time setup).
+- **Changed before it worked:** the Hooks ignored chat from the server's own player, which on a server hosted from DCS is the host, so `-map` never reached the probe. They now go by the `> ` prefix of replies instead.
+- **Passed:** the window opens in the cockpit with DCS's terrain map (built in 12 ms, redrawn in 2 ms), the unit, SAM and airbase symbols, and the drawing layer's lines, dashed and shaded ring and text box. The Map, Terrain and Satellite buttons respond, and the side panel shows.
+- **Fixed:** clicks on symbols found nothing (the click radius was measured along the wrong axis; icons now have their own hit test). The editor's own line symbols (`RouteLine`, `ThreatRangeBorder`) didn't show, so routes and rings are all on the drawing layer. The shading either side of the front was too faint to see (now 20%). Coloured labels were hard to read (now white with a dark outline).
+- **Passed (later):** pan and zoom work, and Ctrl+Shift+F8 shows and hides the map in the cockpit.
+- **Not tried yet:** `-map move` and `-map live` (refresh without the view jumping, frame rate), VR, and the click and drawing fixes above.

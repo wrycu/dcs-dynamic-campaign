@@ -197,9 +197,7 @@ Each step is tested offline first, then in DCS:
 
 ## Questions to decide
 
-1. **When a session's mission is rebuilt:** only between sessions (the war carries on while nobody
-   is on), or also during one, which puts everyone back in the slot list. Proposal: between
-   sessions, with the session's player flights fixed at the rebuild.
+None open.
 
 Decided (2026-11-24): 3–4 blue flights an hour is enough; red fights defensively by attrition
 (intercepts where blue is weak, supports its counterattacks, attacks exposed blue units; no
@@ -207,6 +205,9 @@ sweeps or raids into blue's airspace); the AI flies unclaimed flights.
 Decided (2026-11-25): the mission is rebuilt each session with a Client group per planned player
 flight carrying its loadout, cartridge and kneeboard pages (this also gets them to remote players
 on a dedicated server); players may fly a whole flight, and the AI fills the seats they don't.
+Decided (2026-11-26): player flights start hot (`player_start`, an option); the mission is rebuilt
+at or near the start of a session's player flights, not during them, with those flights fixed at
+the rebuild (details when the builder is written).
 
 ## Built so far (2026-11-25)
 

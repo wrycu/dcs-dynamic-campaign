@@ -377,7 +377,16 @@ local has_rpc, RPC = pcall(require, "RPC")
 function commands.client_rpc(d)
   if not has_rpc then error("RPC module not available") end
   local args = type(d.args) == "table" and d.args or {}
-  RPC.sendEvent(tonumber(d.player_id), tostring(d.method), unpack(args))
+  local pid = tonumber(d.player_id)
+  -- The host of a server hosted from DCS is a player too, and its client script lives in this
+  -- Lua state: DCS can't send RPC to itself, so call it here (P21).
+  if Sim.isServer() and pid == net.get_my_player_id() then
+    local f = RPC.method[tostring(d.method)]
+    if not f then error("no client script here (method " .. tostring(d.method) .. ")") end
+    f(pid, unpack(args))
+    return
+  end
+  RPC.sendEvent(pid, tostring(d.method), unpack(args))
 end
 
 if has_rpc then
@@ -521,8 +530,9 @@ end
 callbacks.onPlayerTrySendChat = safe("onPlayerTrySendChat", function(id, msg, all)
   log_info("onPlayerTrySendChat id=" .. tostring(id) .. " all=" .. tostring(all) .. " msg=" .. tostring(msg))
   if not is_tracked_player(id) or type(msg) ~= "string" then return nil end
-  -- The server's own chat (the engine's replies) comes through here too; never treat it as a command.
-  if id == net.get_my_player_id() then return nil end
+  -- The server's own chat (the engine's replies) comes through here too, with the server's own id.
+  -- Replies start with "> ", never the prefix, so they can't be taken for commands. The server's own
+  -- id isn't ignored: on a server hosted from DCS that's the host, a player (Run 26).
   if msg:sub(1, #cfg.chat_prefix) ~= cfg.chat_prefix then return nil end
   -- Live only, never queued or replayed: a command typed while the engine was away must not run
   -- later (Run 14d: replayed -join commands ran after the player had left).

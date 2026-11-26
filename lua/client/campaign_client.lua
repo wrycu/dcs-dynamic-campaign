@@ -21,16 +21,23 @@ RPC methods (server -> this client):
                         buttons = [{key, label}] }. Ctrl+Shift+F9 shows or hides it.
   campaignWeb(arg)      open a web page in DCS (its Chromium widget): arg = { html =, mode = mount|data|stock }
                         or { url = }.
+  campaignMap(spec)     show the war map (proof P21): a native window with the Mission Editor's map widget,
+                        the server's symbols on it and a side panel. Ctrl+Shift+F8 shows or hides it. See
+                        open_map for the spec.
 This client -> server:
   campaignClientHello(version)   on each mission load, so the server knows the script is here.
   campaignClick(key)             a window button (or a page's edQuery "click") was pressed.
   campaignWebEvent(stage, detail)  how the window and web page got on (window, open, created,
-                                   loaded, mount_failed).
+                                   loaded, mount_failed), and the map (map, map_click).
+
+On a server hosted from a player's DCS (MULTIPLAYER > New server), the host is a player too: the
+campaign Hooks and this script then run in the same Lua state, and calls between them skip the
+network (DCS can't send RPC to itself).
 
 Lua 5.1 (DCS).
 ]]
 
-local VERSION = 2
+local VERSION = 3
 
 local function log_info(msg) log.write("CAMPAIGN-CLIENT", log.INFO, msg) end
 local function log_error(msg) log.write("CAMPAIGN-CLIENT", log.ERROR, msg) end
@@ -43,9 +50,12 @@ local Sim = Sim or DCS
 
 local pending_join = false   -- waiting for DCS to give us the slot we asked for
 
+local function server_id() return net.get_server_id and net.get_server_id() or 1 end
+
 local function from_server(sender_id)
-  local server = net.get_server_id and net.get_server_id() or 1
-  return Sim.isMultiplayer() and not Sim.isServer() and sender_id == server
+  if not Sim.isMultiplayer() then return false end
+  if Sim.isServer() then return sender_id == net.get_my_player_id() end   -- the host, from its own Hooks
+  return sender_id == server_id()
 end
 
 -- What the stock slot screen does once the slot is ours: net.spawn_player() and unpause the view.
@@ -85,11 +95,21 @@ end
 -- tables here rather than .dlg files, so the script stays one file.
 
 local HOTKEY = "Ctrl+Shift+F9"   -- shows or hides the campaign window
+local MAP_HOTKEY = "Ctrl+Shift+F8"   -- shows or hides the war map (P21)
+local toggle_map, close_map      -- defined with the map, below
 local FONT = "PTM75F.ttf"        -- the stock in-mission message font (Scripts/UI/GameInfo.dlg)
 local HEADER = 22                -- title bar height
 
 local function to_server(method, ...)
-  RPC.sendEvent(net.get_server_id and net.get_server_id() or 1, method, ...)
+  if Sim.isServer() then   -- the host: the campaign Hooks are in this Lua state
+    local f = RPC.method[method]
+    if f then
+      local ok, err = pcall(f, net.get_my_player_id(), ...)
+      if not ok then log_error("to_server " .. method .. ": " .. tostring(err)) end
+    end
+    return
+  end
+  RPC.sendEvent(server_id(), method, ...)
 end
 
 local function static(x, y, w, h, text, size, color)
@@ -173,6 +193,8 @@ local function show_window(spec, visible)
     set_shown(not shown)
     log_info("window: hotkey, shown=" .. tostring(shown))
   end)
+  -- The map window's hotkey lives here too: this window always exists (see set_shown).
+  campaign_window:addHotKeyCallback(MAP_HOTKEY, function() toggle_map() end)
   campaign_window:setVisible(true)
   shown = true
   if not visible then set_shown(false) end
@@ -292,6 +314,311 @@ function RPC.method.campaignWeb(sender_id, arg)
   if not ok then close_web() end
 end
 
+-- ---------- P21: the war map, a native window with the Mission Editor's map widget ----------
+-- GUIMapView is the map Instant Action's editor and the in-game DTC manager use: DCS's own terrain
+-- map, zoom and pan, the editor's symbols ("user objects", from its classifier) and its drawing
+-- layer (lines and filled shapes, as the editor's draw panel makes). The server sends what to show.
+--
+-- spec = {
+--   title, center = { x, y }, scale (metres across, roughly), mode = "map"|"altitude"|"satellite",
+--   keep_view = true      redraw without moving the camera (a refresh)
+--   panel = { "line", ... }   the side panel's text
+--   objects = {           all positions in mission metres (x north, y east), colours {r, g, b, a} 0..1
+--     { kind = "icon", x, y, sym = SYMBOLS key, color, heading (deg), label, info }
+--     { kind = "text", x, y, text, color, fill, size, info }                   (drawing layer)
+--     { kind = "line", points = { {x, y}, ... }, color, style = LINE_STYLES key, info }
+--     { kind = "area", points, color, fill, style, info }                     (drawing layer)
+--     { kind = "ring", x, y, r, color, fill, style, info }                    (drawing layer)
+-- (Run 26: the editor's own line symbols, RouteLine and ThreatRangeBorder, didn't show; lines and
+-- rings are on the drawing layer.)
+--   } }
+-- Every step reports to the server (campaignWebEvent "map"), so a probe sees how far it got.
+
+local NM = 1852
+local MAP_PANEL_W = 300
+local SYMBOLS = {
+  tank = "P0091000001", ifv = "P0091000002", sam_long = "P0091000013", sam_medium = "P0091000012",
+  sam_short = "P0091000011", aaa = "P0091000014", fighter = "P0091000024", helo = "P0091000021",
+  awacs = "P0091000056", tanker = "P0091000064", airbase = "AirdromeClass1", plane = "IAG_PLANE",
+  target = "IAG_TARGET",
+}
+local DRAW_DIR = "./MissionEditor/data/NewMap/images/draw/"
+local LINE_STYLES = {   -- the editor's line styles: texture, and its height (the line's thickness)
+  solid = { "polyline_solid.png", 8 }, solid2 = { "polyline_Solid2.png", 16 }, dash = { "polyline_dash2.png", 16 },
+  dot = { "polyline_dotted2.png", 16 }, boundary = { "polyline_Bound1.png", 32 },
+  boundary2 = { "polyline_Bound2.png", 32 }, triangle = { "polyline_triangle2.png", 32 },
+  wire = { "polyline_wirefence.png", 32 },
+}
+
+local map_window, map_view, map_spec = nil, nil, nil
+local map_info = {}        -- "u<id>" / "d<id>" -> what a click on that object shows
+local map_icons = {}       -- { x, y, info } of each icon, for clicks (our own hit test)
+local map_next_id = 2000000
+
+local function map_event(stage, detail)
+  log_info("map: " .. stage .. " " .. tostring(detail))
+  to_server("campaignWebEvent", stage, tostring(detail))
+end
+
+local function nid() map_next_id = map_next_id + 1; return map_next_id end
+
+local function col(c, default)
+  c = type(c) == "table" and c or default or { 1, 1, 1, 1 }
+  return { tonumber(c[1]) or 1, tonumber(c[2]) or 1, tonumber(c[3]) or 1, tonumber(c[4]) or 1 }
+end
+
+local function circle(x, y, r, sides)
+  local pts = {}
+  for i = 0, sides do
+    local a = 2 * math.pi * i / sides
+    pts[#pts + 1] = { x = x + r * math.cos(a), y = y + r * math.sin(a) }
+  end
+  return pts
+end
+
+local function pts_of(list)
+  local out = {}
+  for _, p in ipairs(type(list) == "table" and list or {}) do
+    out[#out + 1] = { x = tonumber(p.x or p[1]) or 0, y = tonumber(p.y or p[2]) or 0 }
+  end
+  return out
+end
+
+-- Drawing-layer shapes take points relative to their x, y (me_draw_panel.lua).
+local function draw_shape(objectType, pts, o, closed)
+  local style = LINE_STYLES[o.style or "solid"] or LINE_STYLES.solid
+  local ox, oy = pts[1].x, pts[1].y
+  local rel = {}
+  for i, p in ipairs(pts) do rel[i] = { x = p.x - ox, y = p.y - oy } end
+  local data = { objectType = objectType, points = rel, x = ox, y = oy, thickness = style[2],
+                 file = DRAW_DIR .. style[1], color = col(o.color), closed = closed or false }
+  if objectType == "Polygon" then data.fillColor = col(o.fill, { 0, 0, 0, 0 }) end
+  local id = map_view:createDrawObject(data)
+  map_view:addDrawObject(id, true)
+  if o.info then map_info["d" .. tostring(id)] = o.info end
+end
+
+local function draw_objects(objects)
+  local user, counts, failed = {}, {}, {}
+  local function add_user(obj, info)
+    user[#user + 1] = obj
+    if info then map_info["u" .. tostring(obj.id)] = info end
+  end
+  for _, o in ipairs(objects or {}) do
+    local ok, err = pcall(function()
+      local k = o.kind
+      if k == "icon" then
+        local c = col(o.color)
+        add_user({ classKey = SYMBOLS[o.sym] or o.sym or SYMBOLS.target, id = nid(), x = o.x, y = o.y,
+                   angle = tonumber(o.heading) or 0, color = c }, o.info or o.label)
+        map_icons[#map_icons + 1] = { x = o.x, y = o.y, info = o.info or o.label }
+        if o.label then   -- Run 26: coloured labels were hard to read; white with a dark outline, as Instant Action
+          add_user({ classKey = "AirdromeCaption", id = nid(), x = o.x, y = o.y, title = tostring(o.label),
+                     color = { 1, 1, 1 }, blurColor = { 0, 0, 0 }, offsetX = 16, offsetY = 0 }, o.info or o.label)
+        end
+      elseif k == "line" then
+        draw_shape("Polyline", pts_of(o.points), o, false)
+      elseif k == "area" then
+        draw_shape("Polygon", pts_of(o.points), o, true)
+      elseif k == "ring" then
+        draw_shape("Polygon", circle(o.x, o.y, o.r, 48), o, true)
+      elseif k == "text" then
+        local id = map_view:createDrawObject({ objectType = "TextBox", x = o.x, y = o.y, angle = 0,
+          color = col(o.color), text = tostring(o.text or ""), font = "DejaVuLGCSansCondensed.ttf",
+          fontSize = tonumber(o.size) or 14, fillColor = col(o.fill, { 0, 0, 0, 0.5 }), borderThickness = 0 })
+        map_view:addDrawObject(id, true)
+        if o.info then map_info["d" .. tostring(id)] = o.info end
+      else
+        error("unknown kind " .. tostring(k))
+      end
+    end)
+    counts[o.kind or "?"] = (counts[o.kind or "?"] or 0) + (ok and 1 or 0)
+    if not ok then failed[#failed + 1] = tostring(o.kind) .. ": " .. tostring(err) end
+  end
+  if #user > 0 then map_view:addUserObjects(user) end
+  local parts = {}
+  for k, n in pairs(counts) do parts[#parts + 1] = k .. " " .. n end
+  table.sort(parts)
+  return table.concat(parts, ", "), failed
+end
+
+local function clear_objects()
+  map_info, map_icons = {}, {}
+  pcall(function() map_view:clearUserObjects() end)
+  pcall(function() map_view:clearDrawObjects() end)
+end
+
+-- Mouse: drag (any button) pans, the wheel zooms about the cursor, a click shows what's there.
+local function setup_mouse(view)
+  local state = view:getState()
+  local down, dragged = nil, false
+  function state:onMouseDown(x, y, button) down, dragged = { x = x, y = y }, false end
+  function state:onMouseDrag(dx, dy, button, x, y)
+    if math.abs(dx) + math.abs(dy) > 0 then dragged = true end
+    local cx, cy = view:getCamera()
+    local x0, y0 = view:getMapPoint(0, 0)
+    local x1, y1 = view:getMapPoint(dx, dy)
+    view:setCamera(cx - (x1 - x0), cy - (y1 - y0))
+  end
+  function state:onMouseWheel(x, y, clicks)
+    local mx, my = view:getMapPoint(x, y)
+    local scale = view:getScale() * (clicks > 0 and 0.8 or 1.25) ^ math.abs(clicks)
+    view:setScale(math.max(2000, math.min(4000000, scale)))
+    local mx2, my2 = view:getMapPoint(x, y)
+    local cx, cy = view:getCamera()
+    view:setCamera(cx + mx - mx2, cy + my - my2)
+  end
+  function state:onMouseUp(x, y, button)
+    if dragged or not down then return end
+    local mx, my = view:getMapPoint(x, y)
+    -- 14 px in metres. Screen right is map east (y), not map x: Run 26's radius came out as zero.
+    local ex, ey = view:getMapPoint(x + 14, y)
+    local radius = math.sqrt((ex - mx) ^ 2 + (ey - my) ^ 2)
+    local found, best = nil, radius
+    for _, i in ipairs(map_icons) do
+      local d = math.sqrt((i.x - mx) ^ 2 + (i.y - my) ^ 2)
+      if d <= best then found, best = i.info, d end
+    end
+    if not found then
+      for _, id in ipairs(view:findUserObjects(mx, my, radius) or {}) do
+        found = found or map_info["u" .. tostring(id)]
+      end
+    end
+    if not found then
+      for _, id in ipairs(view:findDrawObjects(mx, my, radius) or {}) do
+        found = found or map_info["d" .. tostring(id)]
+      end
+    end
+    local text = found or string.format("Nothing here (%.0f, %.0f).", mx, my)
+    map_window.txtInfo:setText(text)
+    map_event("map_click", text)
+  end
+end
+
+local function map_window_table(W, H)
+  local x0, pad = W - MAP_PANEL_W + 10, 6
+  local bw = math.floor((MAP_PANEL_W - 20 - 2 * pad) / 3)
+  local children = {
+    txtPanel = static(x0, HEADER + 8, MAP_PANEL_W - 20, H - HEADER - 300, "", 14, "0xd0d0d0ff"),
+    txtInfo = static(x0, H - 280, MAP_PANEL_W - 20, 170, "Click a symbol for details.", 14, "0xffe080ff"),
+    btnModeMap = button(x0, H - 100, bw, 28, "Map"),
+    btnModeAlt = button(x0 + bw + pad, H - 100, bw, 28, "Terrain"),
+    btnModeSat = button(x0 + 2 * (bw + pad), H - 100, bw, 28, "Satellite"),
+    btnCenter = button(x0, H - 66, bw * 2 + pad, 28, "Back to the front"),
+    btnCloseMap = button(x0, H - 34, bw * 2 + pad, 28, "Close (" .. MAP_HOTKEY .. ")"),
+  }
+  return { type = "Window",
+    params = { bounds = { x = 40, y = 40, w = W, h = H }, text = "Campaign", enabled = true, draggable = true,
+               hasCursor = true, modal = false, offscreen = false, overlay = false, buddy = false,
+               resizable = false, clipResizeCursor = false, lockFlow = false, layout = {}, zOrder = 100002 },
+    skin = { params = { name = "windowSkin", headerHeight = HEADER },
+             states = { released = { [1] = { bkg = { center_center = "0x1b2633f2" } } } } },
+    children = children }
+end
+
+-- The editor's symbol set, read from its file (me_map_classifier would also load the editor's
+-- unit database, me_db_api, for module symbols we don't use).
+local function load_classifier()
+  local f, err = loadfile("./MissionEditor/data/NewMap/classifier.lua")
+  if not f then error("classifier: " .. tostring(err)) end
+  return f(function(s) return s end), "classifier.lua"
+end
+
+local function frame(spec)
+  local c = type(spec.center) == "table" and spec.center or {}
+  if c.x and c.y then map_view:setCamera(tonumber(c.x), tonumber(c.y)) end
+  map_view:setScale(tonumber(spec.scale) or 300000)
+end
+
+close_map = function()
+  if map_window then
+    pcall(function() map_view:destroy() end)
+    pcall(function() map_window:kill() end)
+  end
+  map_window, map_view = nil, nil
+end
+
+local function build_map()
+  local Gui = require("dxgui")
+  local GUIMapView = require("GUIMapView")
+  local DialogLoader = require("DialogLoader")
+  local sw, sh = Gui.GetWindowSize()
+  local W, H = math.min(sw - 80, 1800), math.min(sh - 80, 1100)
+  map_event("map", "step window " .. W .. "x" .. H .. " on " .. sw .. "x" .. sh)
+  map_window = DialogLoader.spawnWidget("dialog", map_window_table(W, H), {}, "campaign_map")
+  map_view = GUIMapView.new()
+  map_window:insertWidget(map_view)
+  map_view:setBounds(0, HEADER, W - MAP_PANEL_W, H - HEADER)
+  map_view:setBkgColor({ 107 / 255, 175 / 255, 248 / 255 })
+  local classifier, source = load_classifier()
+  map_view:loadClassifier(classifier)
+  map_event("map", "step classifier from " .. source)
+  local theme = "nato"
+  pcall(function() theme = require("Options.Data").getIconsTheme() or theme end)
+  local ok_theme, err_theme = pcall(function() map_view:onIconsThemeChange(theme) end)
+  map_event("map", "step icons theme " .. tostring(theme) .. (ok_theme and "" or (" failed: " .. tostring(err_theme))))
+  pcall(function() map_view:showLayer("MGRS GRID", false) end)
+  pcall(function() map_view:showLayer("GEOGRAPHICAL GRID", false) end)
+  local ok_b, err_b = pcall(function()
+    local Terrain = require("terrain")
+    local sw_b, ne_b = Terrain.GetTerrainConfig("SW_bound"), Terrain.GetTerrainConfig("NE_bound")
+    map_view:setMapBounds(sw_b[1] * 1000, sw_b[3] * 1000, ne_b[1] * 1000, ne_b[3] * 1000)
+  end)
+  map_event("map", "step bounds " .. (ok_b and "set" or ("failed: " .. tostring(err_b))))
+  map_view:initEDTerrainGraphics("./")
+  map_event("map", "step terrain graphics")
+  setup_mouse(map_view)
+
+  local function mode(m) return function()
+    local ok, err = pcall(function() map_view:setMapMode(m) end)
+    map_event("map", "mode " .. m .. (ok and "" or (" failed: " .. tostring(err))))
+  end end
+  map_window.btnModeMap:addChangeCallback(mode("map"))
+  map_window.btnModeAlt:addChangeCallback(mode("altitude"))
+  map_window.btnModeSat:addChangeCallback(mode("satellite"))
+  map_window.btnCenter:addChangeCallback(function() if map_spec then frame(map_spec) end end)
+  map_window.btnCloseMap:addChangeCallback(function() map_window:setVisible(false) end)
+  map_window.onClose = function() map_window:setVisible(false) end
+end
+
+local function open_map(spec)
+  local t0 = os.clock()
+  local fresh = map_window == nil
+  if fresh then
+    local ok, err = pcall(build_map)
+    if not ok then
+      map_event("map", "failed building the window: " .. tostring(err))
+      close_map()
+      return
+    end
+  end
+  map_spec = spec
+  pcall(function() map_window:setText(tostring(spec.title or "Campaign")) end)
+  map_window.txtPanel:setText(table.concat(type(spec.panel) == "table" and spec.panel or {}, "\n"))
+  local ok_mode, err_mode = pcall(function() map_view:setMapMode(spec.mode or "map") end)
+  if not ok_mode then map_event("map", "mode failed: " .. tostring(err_mode)) end
+  if fresh or not spec.keep_view then frame(spec) end
+  clear_objects()
+  local drawn, failed = draw_objects(spec.objects)
+  map_window:setVisible(true)
+  map_event("map", string.format("%s in %.0f ms: %s%s", fresh and "shown" or "redrawn", (os.clock() - t0) * 1000,
+                                  drawn, #failed > 0 and ("; FAILED " .. table.concat(failed, "; ")) or ""))
+end
+
+toggle_map = function()
+  if not map_window then
+    if map_spec then open_map(map_spec) else log_info("map: nothing from the server yet") end
+    return
+  end
+  map_window:setVisible(not map_window:getVisible())
+end
+
+function RPC.method.campaignMap(sender_id, spec)
+  if not from_server(sender_id) then return end
+  local ok, err = pcall(open_map, type(spec) == "table" and spec or {})
+  if not ok then map_event("map", "failed: " .. tostring(err)) end
+end
+
 local callbacks = {}
 
 function callbacks.onPlayerChangeSlot(id)
@@ -303,7 +630,7 @@ end
 
 function callbacks.onMissionLoadEnd()
   pending_join = false
-  if Sim.isMultiplayer() and not Sim.isServer() then
+  if Sim.isMultiplayer() then   -- a client, or the host of a server hosted from DCS
     to_server("campaignClientHello", VERSION)
     -- A hidden window from the start, so the hotkey works before the server sends anything.
     local ok, err = pcall(show_window, last_spec or { title = "Campaign", lines = { "Nothing from the server yet." } }, false)
@@ -313,6 +640,7 @@ end
 
 function callbacks.onSimulationStop()
   close_web()
+  close_map()
   if campaign_window then pcall(function() campaign_window:kill() end) end
   campaign_window = nil
 end

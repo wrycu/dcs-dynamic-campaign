@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MISSION = ROOT / "lua" / "mission" / "campaign_bridge.lua"
 HOOKS = ROOT / "lua" / "hooks" / "campaign_hooks.lua"
+CLIENT = ROOT / "lua" / "client" / "campaign_client.lua"
 TRANSPORT = re.compile(r"-- BEGIN TRANSPORT\n.*?-- END TRANSPORT\n", re.S)
 LUAJIT = shutil.which("luajit")
 
@@ -21,7 +22,7 @@ class LuaTests(unittest.TestCase):
 
     @unittest.skipUnless(LUAJIT, "luajit not installed")
     def test_lua_syntax(self):
-        for path in (MISSION, HOOKS):
+        for path in (MISSION, HOOKS, CLIENT):
             with self.subTest(path=path.name):
                 r = subprocess.run([LUAJIT, "-bl", str(path)], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, r.stderr)
