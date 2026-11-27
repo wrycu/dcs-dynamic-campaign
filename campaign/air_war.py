@@ -32,6 +32,7 @@ from typing import Any, Callable
 from . import combat
 from .bubble import strength
 from .combat import AirSide
+from .flight_spawn import assign_number, callsign_of
 from .model import (CampaignState, Flight, FlightState, GroundRole, GroundUnit, ObjectiveType, Pos, Side,
                     SpawnState, StartMode, Theater, Waypoint)
 
@@ -431,6 +432,8 @@ class AirWar:
                        [Waypoint(target, 7_000, action="ORBIT", params={"duration_s": 600}),
                         Waypoint(base, 500, action="LAND", params={"base": sq.base_id})],
                        takeoff_time=now, start=StartMode.RUNWAY)
+            f.number = assign_number(self.state, side, fid)
+            f.callsign = callsign_of(side, f.number)
             self.state.flights[fid] = f
             self.hunted.add(prey.id)
             log.info("AIR %s scrambles %s from %s at %s %s", side.name.lower(), fid, sq.base_id, prey.callsign,

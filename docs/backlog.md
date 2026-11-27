@@ -653,6 +653,56 @@ What shows comes from the campaign state, so it is also worth hitting: a target 
   formations), live units only for what has to act (air defence, convoys). Dressing spawns
   after the formations that can shoot, so it never crowds them out of the vehicle cap.
 
+## 45. Routes that avoid the air defence (asked for after Run 27)
+
+The planner flies every flight in straight lines: base, a climb point, the IP, the target, an
+egress point and home (`Planner._flight` in `campaign/planner.py`). Run 27's war map showed what
+that means: a STRIKE and its SEAD from Ramat David to a target north-east of Damascus went
+straight through the whole Damascus air defence (SA-2s, SA-3s, SA-6s, an SA-11, SHORAD), both ways,
+past a dozen sites the SEAD flight wasn't tasked against. No pilot would fly it, and it's an
+insane mission to plan. Today the planner only scores a target by the SAMs near it and along the
+straight line (`Planner.risk`), and picks one site for the SEAD to hit.
+
+Needed:
+- **Route around known threats.** Plan each leg as a path (A* on a grid, or around the threat
+  rings as obstacles) that costs exposure to the air defence the side knows of (war map: what
+  blue knows), not distance alone: around the rings where it can, through the thinnest part
+  where it must, with a sensible detour limit (fuel). Ingress and egress on different paths.
+- **Altitude by threat.** Low under the long range SAMs' radar where the terrain allows, high
+  over the short range air defence and guns; the waypoints carry the altitude.
+- **SEAD and escort along the route.** SEAD tasked against the sites the route can't avoid, timed
+  to arrive first; the risk score (`Planner.risk`) taken along the planned path.
+- **Say no.** A target behind an IADS the side can't suppress isn't worth the package: skip it,
+  or plan the DEAD that opens the way first (BMS does this with its target priorities).
+- **The air war follows.** Flights outside DCS lose aircraft by the route's exposure
+  (`campaign/air_war.py`), so a good route matters even when nobody flies it.
+- The war map already shows the route, its times and every site along it when a flight is
+  selected, so the difference will be easy to see.
+
+## 46. Packages that fly together: escort, CAP and a rendezvous (asked for after Run 27)
+
+A package today is a main flight plus SEAD (if its route crosses a known SAM) and an escort (if
+red fighters can reach it), each flying its own straight route from its own base, timed only to
+the TOT (SEAD 2 minutes early). Needed:
+
+- **Escort or CAP for every package that needs it.** Assign air cover by the threat to the whole
+  route, not only whether fighters can reach the target: an escort that flies with the strikers
+  (same route, same times), or a TARCAP/BARCAP that holds a station over the target or across the
+  enemy's fighter bases' approach for the package's time in the area. Use a CAP already in the air
+  when one covers it. Say no to the package (or wait) when no cover is available.
+- **A rendezvous before the push.** When it helps (flights from different bases, or SEAD and
+  escort that must lead the strikers in), the package meets at a rendezvous point on its side of
+  the front, at a set time and altitude, and pushes from there together: each flight's route goes
+  base → rendezvous (with a hold if early) → push point → its task. The rendezvous and push times
+  are in each flight's plan, on the war map (selected flight: its waypoint times), in the
+  `.dtc`/kneeboard, and in DCS (AI flights hold there until the push time).
+- **Timing from the push:** SEAD ahead of the strikers by a set lead, the escort with them, CAP
+  on station before the first arrives and until the last leaves.
+- **Abstract air war:** an escorted package fares better against interceptors only when the
+  escort is really with it (same place and time), so the air war uses the routes.
+- Goes with routes that avoid the air defence (item 45): the rendezvous is where the planned
+  route through the threats starts.
+
 ## Minor improvements
 
 Small additions that make the campaign easier to use; each can be done once the parts it

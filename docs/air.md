@@ -5,7 +5,7 @@ How a campaign `Flight` becomes a DCS group and back. The code is in `campaign/f
 ## Building a flight
 
 - **Names:** group `fl:<flight id>`, units `fl:<flight id>#<n>`.
-- **Callsigns and board numbers:** each spawned flight gets a number from 1 to 89 that no other spawned flight on its side is using. Board numbers are `<number><unit>`, e.g. `131`, `132`. Blue callsigns use the NATO names, e.g. Springfield 4-1; red uses numeric callsigns such as 241.
+- **Callsigns and board numbers:** each flight has the number the planner gave it (`Flight.number`, its callsign in the campaign); a flight without one (older saves) gets a number from 1 to 89 that no other spawned flight on its side is using when it spawns. Board numbers are `<number><unit>`, e.g. `131`, `132`. Blue callsigns use the NATO names, e.g. Springfield 4-1; red uses numeric callsigns such as 241.
 - **Starts** (`Flight.start`):
 
   | Start | DCS first point | Needs |

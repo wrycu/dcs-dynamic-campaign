@@ -112,7 +112,8 @@ class AirSpawner:
         first_launch = flight.state is FlightState.PLANNED
         if first_launch and sq.aircraft_ready < flight.aircraft:
             raise ValueError(f"{sq.name} has {sq.aircraft_ready} aircraft ready, {flight.id} needs {flight.aircraft}")
-        number = self._free_number(flight, sq.side)
+        # Its own number (given when planned: its callsign); older saves' flights get a free one.
+        number = flight.number or self._free_number(flight, sq.side)
         orbit_left = None
         if flight.hold_until is not None and flight.start is StartMode.AIR:
             orbit_left = max(0.0, flight.hold_until - self.state.clock)

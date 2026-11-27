@@ -323,6 +323,13 @@ class Engine:
                 self.ready = True
                 log.info("scenario %s set up: %s", self.scenario.name, self.summary())
             await self.scenario.on_mission(self, new_run)
+            if self.warmap is not None:
+                try:   # time of day and weather for the war map; an older mission bridge may not answer
+                    info = await self.mission_call("query", {"what": "mission"})
+                    if isinstance(info, dict):
+                        self.warmap.set_mission(info, self.state.clock)
+                except (BridgeError, asyncio.TimeoutError) as e:
+                    log.warning("MAP no mission time and weather: %s", e)
             if self.ghosts:
                 for line in self.ghosts.place(self.airbase_pos, self.scenario.home, self.scenario.magvar):
                     log.info(line)

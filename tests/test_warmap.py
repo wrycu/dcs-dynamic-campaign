@@ -155,7 +155,7 @@ class IntelTests(unittest.TestCase):
         self.assertEqual(len(rings), 5)
         self.assertFalse(any("info" in o for o in rings))  # clicks go to what's inside
         self.assertEqual([o for o in rings if "detail" not in o][0]["r"], 75_000)
-        self.assertIn("  SA-10", spec["panel"])
+        self.assertNotIn("KNOWN THREATS", spec["panel"])   # no summary: the map shows them
 
     def test_a_selected_flight_shows_the_air_defence_on_its_route(self):
         self.air_defence()
@@ -210,7 +210,7 @@ class IntelTests(unittest.TestCase):
         w, k = self.w, 1000
         f = w.flight("cas3", "blue_sq", FlightState.PLANNED, mission="CAS", takeoff=w.state.clock + 2 * 3600,
                      player=True)
-        f.waypoints = [Waypoint(Pos(0, 50 * k), 7000)]
+        f.waypoints = [Waypoint(Pos(0, 50 * k), 7000, action="CAS")]
         w.unit("shilka", Side.RED, 0, 40 * k, {"ZSU-23-4 Shilka": 2}, GroundRole.AAA)
         spec = w.picture()
         [button] = spec["flights"]
@@ -228,12 +228,31 @@ class IntelTests(unittest.TestCase):
         route = next(o for o in in_group if o["kind"] == "line")
         self.assertEqual((route["color"], route["select"]), (warmap.WHITE, "f:cas3"))
         target = next(o for o in in_group if o.get("sym") == "target")
-        self.assertEqual((target["y"], target["info"]), (15_000, "CAS3's target: East Town"))
+        self.assertEqual((target["y"], target["info"]), (50_000, "CAS3's target: East Town"))   # its attack point
         # 110 km at the Hornet's cruise speed after take-off at 04:05.
         leg = 110_000 / cruise_ms("FA-18C_hornet")
         eta = w.state.clock + 2 * 3600 + leg
         text = next(o for o in in_group if o["kind"] == "text")["text"]
-        self.assertEqual(text, f"WP1 {warmap.hhmm(eta)} +{int(leg) // 3600}:{int(leg) // 60 % 60:02d}")
+        self.assertEqual(text, f"TGT {warmap.hhmm(eta)} +{int(leg) // 3600}:{int(leg) // 60 % 60:02d}")
+
+    def test_a_sead_flights_target_is_its_sam_site(self):
+        # Run 27: Colt 4, the SEAD of a CAS package, had its marker on the CAS's target, 21 km away.
+        w, k = self.w, 1000
+        cas = w.flight("cas1", "blue_sq", FlightState.PLANNED, mission="CAS", takeoff=w.state.clock + 600,
+                       player=True)
+        cas.waypoints = [Waypoint(Pos(0, 15 * k), 7000, action="CAS")]
+        sead = w.flight("sead2", "blue_sq", FlightState.PLANNED, mission="SEAD", takeoff=w.state.clock + 500,
+                        player=True)
+        sead.waypoints = [Waypoint(Pos(0, 36 * k), 7000, action="SEAD")]
+        sead.package_id = cas.package_id
+        w.state.packages[cas.package_id].flight_ids.append("sead2")
+        w.unit("sa6", Side.RED, 2 * k, 37 * k, {"Kub 2P25 ln": 4, "Kub 1S91 str": 1}, GroundRole.SAM)
+        spec = w.picture()
+        targets = {o["groups"][0]: (o["x"], o["y"], o["info"]) for o in spec["objects"] if o.get("sym") == "target"}
+        self.assertEqual(targets["f:sead2"], (2_000, 37_000, "SEAD2's target: SA-6 site"))   # the site itself
+        self.assertEqual(targets["f:cas1"], (0, 15_000, "CAS1's target: East Town"))
+        info = next(b["info"] for b in spec["flights"] if b["select"] == "f:sead2")
+        self.assertIn("SEAD at SA-6 site", info)
 
     def test_a_selected_flight_shows_its_package_in_yellow(self):
         w, k = self.w, 1000
@@ -248,12 +267,28 @@ class IntelTests(unittest.TestCase):
         yellow = [o for o in spec["objects"] if o["kind"] == "line" and o["color"] == warmap.YELLOW]
         # Each one's route in yellow while the other is selected.
         self.assertEqual(sorted(tuple(o["groups"]) for o in yellow), [("f:sead1",), ("f:strike2",)])
+        self.assertEqual(spec["packages"], {"f:sead1": sead.package_id, "f:strike2": sead.package_id})
         label = next(o for o in spec["objects"] if o["kind"] == "text" and o["groups"] == ["f:sead1"]
                      and o["color"] == warmap.YELLOW)
         self.assertEqual(label["text"], "STRIKE2 STRIKE 03:05")     # its time on target
         tgt = next(o for o in spec["objects"] if o["kind"] == "text" and o["groups"] == ["f:strike2"]
                    and o["color"] == warmap.WHITE)
         self.assertEqual(tgt["text"], "TGT 03:05 +0:45")
+
+    def test_time_of_day_and_weather(self):
+        w = self.w
+        spec = Picture(w.state, w.theater, Side.BLUE, tod_offset=8 * 3600,
+                       weather="scattered clouds at 8,000 ft, wind 12 kt").build()
+        self.assertEqual(spec["panel"][:2], ["Day 2  10:05", "Scattered clouds at 8,000 ft, wind 12 kt"])
+
+    def test_weather_text(self):
+        self.assertEqual(warmap.weather_text({"preset": "Preset5", "base": 2500, "visibility": 80_000,
+                                              "wind_ground": {"speed": 6, "dir": 90}, "temperature": 18.4}),
+                         "scattered clouds at 8,000 ft, visibility 10+ nm, wind 12 kt, 18°C")
+        self.assertEqual(warmap.weather_text({"visibility": 5000, "fog": True, "wind_ground": {"speed": 0.5}}),
+                         "clear, fog, visibility 3 nm, calm")
+        self.assertEqual(warmap.weather_text({"preset": "RainyPreset2", "base": 900}), "overcast and rain at 3,000 ft")
+        self.assertEqual(warmap.weather_text(None), "")
 
     def test_battles_and_news(self):
         w = self.w
@@ -346,6 +381,14 @@ class WarMapTests(unittest.IsolatedAsyncioTestCase):
         self.w.state.objectives["east_town"].owner = Side.BLUE
         self.assertIsNot(self.map.terrain(), t1)
 
+
+    def test_the_missions_time_of_day(self):
+        # DCS says 09:30 (abs) while the campaign clock is at 02:05: map times follow DCS.
+        self.map.set_mission({"abs": 9.5 * 3600, "weather": {"preset": "Preset1"}}, self.w.state.clock)
+        self.map.add_news("coalition takes East Town")
+        self.assertEqual(list(self.map.news), ["09:30 Coalition takes East Town"])
+        panel = self.map.spec(show=True, keep_view=False)["panel"]
+        self.assertEqual(panel[:2], ["Day 2  09:30", "Few clouds"])   # the campaign's day
 
 class SettingTests(unittest.TestCase):
     def test_map_refresh(self):

@@ -30,6 +30,7 @@ from . import combat
 from .air_war import AirWar, seg_dist
 from .bubble import strength
 from .catalog import cruise_ms
+from .flight_spawn import assign_number, callsign_of
 from .ground_war import MANEUVER, GroundWar
 from .model import (CampaignState, Flight, FlightState, GroundRole, GroundUnit, Package, Pos, Side, SpawnState,
                     Squadron, StartMode, Theater, Waypoint)
@@ -487,6 +488,8 @@ class Planner:
         fid = f"{side.name.lower()}_{mission.lower()}_{self.counter}"
         f = Flight(fid, pkg.id, sq.id, f"{mission} {self.counter}", mission, n, pick_loadout(sq.aircraft_type, mission),
                    wps, takeoff_time=0.0, start=StartMode.RAMP_HOT, player_preferred=sq.player_flyable)
+        f.number = assign_number(self.state, side, fid)
+        f.callsign = callsign_of(side, f.number)
         self.state.flights[fid] = f
         pkg.flight_ids.append(fid)
         return f

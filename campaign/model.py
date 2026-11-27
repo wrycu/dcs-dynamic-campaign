@@ -186,6 +186,9 @@ class Flight:
     spawn: SpawnState = SpawnState.AGGREGATED
     dcs_group: str | None = None
     player_seats: dict[int, str | None] = field(default_factory=dict)  # seat -> pilot id
+    # DCS flight number (1-89): its callsign and board numbers (campaign.flight_spawn.unit_identity),
+    # given when it's planned, so the plan, the map and its units in DCS all say "Uzi 4". 0: none yet.
+    number: int = 0
 
 
 @dataclass

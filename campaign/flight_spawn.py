@@ -24,7 +24,7 @@ import zlib
 from dataclasses import dataclass
 
 from .catalog import COUNTRY_FOR_SIDE, DEFAULT_CRUISE_KT, KT, cruise_ms
-from .model import Flight, Pos, Side, StartMode, Waypoint
+from .model import Flight, FlightState, Pos, Side, StartMode, Waypoint
 from .payloads import dcs_payload
 from .protocol import PREFIX_FLIGHT, group_name, unit_name
 
@@ -72,6 +72,32 @@ class FlightSpawn:
 def flight_number_hint(flight_id: str) -> int:
     """Stable 1-89 starting guess for a flight's number (see ``unit_identity``)."""
     return zlib.crc32(flight_id.encode()) % 89 + 1
+
+
+BLUE_NUMBERS = 9 * len(CALLSIGN_NAMES)   # flight numbers with a callsign of their own (Enfield 1 .. Pontiac 9)
+
+
+def callsign_of(side: Side, number: int) -> str:
+    """The flight's callsign, as its units have it (``unit_identity``): "Uzi 4" (blue), "23" (red)."""
+    if side is Side.RED:
+        return str(number + 10)
+    name_ix, flight_no = divmod(number - 1, 9)
+    return f"{CALLSIGN_NAMES[name_ix % len(CALLSIGN_NAMES)]} {flight_no + 1}"
+
+
+def assign_number(state, side: Side, flight_id: str) -> int:
+    """A flight number for a new flight: one no other flight of the side still flying or planned has
+    (on blue, each with a callsign of its own), starting from the flight's stable hint."""
+    used = {f.number for f in state.flights.values() if f.number and f.id != flight_id
+            and f.state not in (FlightState.LANDED, FlightState.LOST)
+            and f.squadron_id in state.squadrons and state.squadrons[f.squadron_id].side is side}
+    top = BLUE_NUMBERS if side is Side.BLUE else 89
+    n = (flight_number_hint(flight_id) - 1) % top + 1
+    for k in range(top):
+        cand = (n - 1 + k) % top + 1
+        if cand not in used:
+            return cand
+    return n
 
 
 def unit_identity(side: Side, number: int, i: int) -> dict:

@@ -56,6 +56,7 @@ AWACS_M = 150 * NM         # ...or this close to our airborne AWACS
 LORAD = {"SA-2", "SA-5", "SA-10", "SA-20", "Patriot"}   # long range SAMs: always drawn
 LONG_SAM_M = 15_000        # the enemy's SAM sites reaching this far radiate: known (drawn zoomed in)
 DETAIL_SCALE_M = 40 * NM   # zoomed in to this (metres across) or closer: every known site
+SEAD_FIND_M = 5_000        # a SEAD flight's target: the enemy SAM site this close to its SEAD waypoint
 ROUTE_MARGIN_M = 3 * NM    # a selected flight shows the enemy's air defence within its reach of the route, plus this
 PANEL_AHEAD_S = 3 * 3600   # the panel lists our players' flights taking off within this...
 PANEL_FLIGHTS = 6          # ...the first few, as buttons that select them
@@ -127,17 +128,51 @@ def few(n: int) -> str:
     return about(n)
 
 
-def clock_text(t: float) -> str:
-    """Campaign day and time of day (the campaign starts on day 1 at 00:00)."""
-    s = int(t)
-    return f"Day {s // 86400 + 1}  {s // 3600 % 24:02d}:{s // 60 % 60:02d}"
-
-
 def t_minus(dt: float) -> str:
     """Time to take-off, as BMS shows it: T-0:19:32 (T+ once it's past)."""
     s = int(round(dt))
     sign, s = ("-", s) if s >= 0 else ("+", -s)
     return f"T{sign}{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+
+KT = 0.514444
+
+
+def weather_text(w: dict[str, Any] | None) -> str:
+    """The mission's weather in a line: clouds, visibility, wind, temperature (the mission bridge's
+    ``query mission`` summary). Wind is given without its direction."""
+    if not w:
+        return ""
+    parts = []
+    preset = str(w.get("preset") or "")
+    base = w.get("base")
+    at = f" at {round(float(base) / FT / 500) * 500:,.0f} ft" if isinstance(base, (int, float)) and base > 0 else ""
+    if preset.startswith("RainyPreset"):
+        parts.append(f"overcast and rain{at}")
+    elif preset.startswith("Preset"):
+        try:
+            n = int(preset.removeprefix("Preset"))
+        except ValueError:
+            n = 0
+        kind = "few clouds" if n <= 2 else "scattered clouds" if n <= 12 else "broken clouds" if n <= 19 \
+            else "overcast"
+        parts.append(kind + at)
+    else:
+        parts.append("clear")
+    if w.get("fog"):
+        parts.append("fog")
+    vis = w.get("visibility")
+    if isinstance(vis, (int, float)) and vis > 0:
+        nm = vis / NM
+        parts.append("visibility 10+ nm" if nm >= 10 else f"visibility {nm:.0f} nm")
+    wind = w.get("wind_ground")
+    if isinstance(wind, dict) and isinstance(wind.get("speed"), (int, float)):
+        kt = wind["speed"] / KT
+        parts.append("calm" if kt < 2 else f"wind {kt:.0f} kt")
+    temp = w.get("temperature")
+    if isinstance(temp, (int, float)):
+        parts.append(f"{temp:.0f}°C")
+    return ", ".join(parts)
 
 
 def hhmm(t: float) -> str:
@@ -434,16 +469,19 @@ class Picture:
 
     def __init__(self, state: CampaignState, theater: Theater, side: Side = Side.BLUE, *, magvar: float = 0.0,
                  title: str = "Campaign", news: Iterable[str] = (), side_names: dict[Side, str] | None = None,
-                 terrain: Territory | None = None) -> None:
+                 terrain: Territory | None = None, tod_offset: float = 0.0, weather: str = "") -> None:
         self.st, self.th, self.side, self.magvar = state, theater, side, magvar
         self.enemy = enemy_of(side)
         self.title = title
         self.news = list(news)
         self.names = side_names or {}
         self.terrain = terrain
+        self.off = tod_offset      # campaign clock + this = DCS time of day (seconds since the mission date's midnight)
+        self.weather = weather
         self.objects: list[dict[str, Any]] = []
         self.enemy_ad: list[tuple[GroundUnit, str, float, dict[str, Any]]] = []
         self.flight_buttons: list[dict[str, Any]] = []
+        self.packages: dict[str, str] = {}      # selectable flight's group -> its package
 
     # ----- helpers -----
 
@@ -466,6 +504,35 @@ class Picture:
         if u is not None:
             return u.name if u.side is self.side else f"enemy {ROLE_WORD.get(u.role, 'forces')}"
         return ""   # e.g. a CAP's "front"
+
+    def own_target(self, f: Flight, pkg) -> tuple[Pos, str] | None:
+        """Where the flight attacks and what (Run 27: the package's target isn't each flight's): a SEAD
+        flight's SAM site, a moving target where it is now, else its attack waypoint. None for a flight
+        without one (a CAP on its station)."""
+        wp = next((w for w in f.waypoints if w.action in ("CAS", "BOMB", "SEAD")
+                   or (f.mission == "ESCORT" and w.params.get("target"))), None)
+        if wp is None:
+            return None
+        main = self.target_name(pkg.target_id) if pkg else ""
+        if f.mission == "SEAD":
+            sites = [u for u in self.st.ground_units.values() if u.side is self.enemy and u.role is GroundRole.SAM
+                     and strength(u) > 0 and math.hypot(u.pos.x - wp.pos.x, u.pos.y - wp.pos.y) <= SEAD_FIND_M]
+            if sites:
+                u = min(sites, key=lambda u: math.hypot(u.pos.x - wp.pos.x, u.pos.y - wp.pos.y))
+                return u.pos, f"{sam_name(u)} site" + (f" near {self.near(u.pos)}" if self.near(u.pos) else "")
+            return wp.pos, "air defence" + (f" near {self.near(wp.pos)}" if self.near(wp.pos) else "")
+        if pkg and pkg.target_id in self.st.ground_units and f.mission != "ESCORT":
+            return self.st.ground_units[pkg.target_id].pos, main    # where it is now
+        if f.mission == "ESCORT":
+            return wp.pos, f"escort to {main}" if main else "escort"
+        return wp.pos, main
+
+    def near(self, p: Pos) -> str:
+        """The nearest objective's name, within 15 km."""
+        best = min(self.th.objectives.values(), key=lambda o: math.hypot(o.pos.x - p.x, o.pos.y - p.y), default=None)
+        if best is None or math.hypot(best.pos.x - p.x, best.pos.y - p.y) > 15_000:
+            return ""
+        return best.name
 
     def target_pos(self, target_id: str) -> Pos | None:
         if target_id in self.th.objectives:
@@ -502,14 +569,15 @@ class Picture:
                                  "info": front_info})
         self._airbases()
         self._infrastructure()
-        threats = self._air_defence(ours_ground)
+        self._air_defence(ours_ground)
         seen = self._formations(ours_ground)
         self._battles()
         flights = self._flights()
         # A site only shown on a route that's on nobody's route isn't sent.
         self.objects = [o for o in self.objects if o.get("groups") != [] or o.get("detail")]
-        spec = {"title": self.title, "mode": "map", "panel": self._panel(threats, seen, flights),
+        spec = {"title": self.title, "mode": "map", "panel": self._panel(seen, flights),
                 "objects": self.objects, "detail_scale": round(DETAIL_SCALE_M), "flights": self.flight_buttons,
+                "packages": self.packages,
                 "flights_none": f"none in the next {PANEL_AHEAD_S // 3600} h"}
         c = center or self._centre()
         if c is not None:
@@ -566,10 +634,9 @@ class Picture:
             self.objects.append({"kind": "icon", "sym": INFRA_SYM[o.type], "color": SIDE_COLOR[os_.owner],
                                  **xy(o.pos), "info": info})
 
-    def _air_defence(self, ours_ground: list[Pos]) -> list[str]:
-        """Air defence sites, in three layers (see the module docstring). Returns the panel's threat
-        lines; keeps the enemy's sites for the flights' route threats (``_route_threats``)."""
-        counts: dict[str, int] = {}
+    def _air_defence(self, ours_ground: list[Pos]) -> None:
+        """Air defence sites, in three layers (see the module docstring); keeps the enemy's sites for
+        the flights' route threats (``_route_threats``)."""
         for u in self.st.ground_units.values():
             if u.role not in (GroundRole.SAM, GroundRole.AAA) or strength(u) == 0:
                 continue
@@ -611,9 +678,6 @@ class Picture:
             self.objects += [icon, ring]
             if not mine:
                 self.enemy_ad.append((u, name, rng, icon))
-                if "groups" not in layer:
-                    counts[name] = counts.get(name, 0) + 1
-        return [f"  {n} x{k}" if k > 1 else f"  {n}" for n, k in sorted(counts.items(), key=lambda kv: -kv[1])]
 
     def _route_threats(self, gid: str, route: list[Pos]) -> str:
         """Tags the enemy's air defence along ``route`` (and its target) with ``gid``, so selecting the
@@ -695,12 +759,13 @@ class Picture:
         # The flights one can select: the panel's, and ours in the air (their symbols).
         selectable = {f.id for f in buttons} | {f.id for f in ours if f.state in AIRBORNE and f.pos is not None}
         infos: dict[str, str] = {}
+        self.packages = {f"f:{f.id}": f.package_id for f in ours if f.id in selectable}
         for f in ours:
             sq = st.squadrons[f.squadron_id]
             pkg = st.packages.get(f.package_id)
-            target = self.target_name(pkg.target_id) if pkg else ""
+            own = self.own_target(f, pkg)
+            target, tpos = (own[1], own[0]) if own else (self.target_name(pkg.target_id) if pkg else "", None)
             plan = self._plan(f)
-            tpos = self.target_pos(pkg.target_id) if pkg else None
             gid = f"f:{f.id}"
             mates = [m for m in (pkg.flight_ids if pkg else []) if m != f.id and m in selectable]
             if f.id in selectable:
@@ -716,7 +781,7 @@ class Picture:
                     word = WP_WORD.get(w.action or "", f"WP{i}")
                     self.objects.append({"kind": "text", **xy(Pos(p.x + 0.8 * NM, p.y + 0.8 * NM)), "color": WHITE,
                                          "size": 12, "groups": [gid],
-                                         "text": f"{word} {hhmm(eta)} +{_hmm(eta - f.takeoff_time)}"})
+                                         "text": f"{word} {hhmm(eta + self.off)} +{_hmm(eta - f.takeoff_time)}"})
                 if tpos is not None:
                     self.objects.append({"kind": "icon", "sym": "target", "color": WHITE, **xy(tpos),
                                          "label": f"{f.callsign} target", "groups": [gid],
@@ -730,7 +795,7 @@ class Picture:
                 if at:
                     self.objects.append({"kind": "text", **xy(Pos(at[0].x - 1.5 * NM, at[0].y + 0.8 * NM)),
                                          "color": YELLOW, "size": 12, "groups": list(groups),
-                                         "text": f"{f.callsign} {f.mission} {hhmm(at[1])}"})
+                                         "text": f"{f.callsign} {f.mission} {hhmm(at[1] + self.off)}"})
         for f in buttons:
             plan_pts = [p for p, _, _ in self._plan(f)]
             name, tail = f"{f.callsign}  {f.mission}", f"{f.aircraft} seats"
@@ -785,7 +850,7 @@ class Picture:
     def _flight_info(self, f: Flight, sq, target: str) -> str:
         lines = [f"{f.callsign}: {f.aircraft}x {sq.aircraft_type}", f"{f.mission}" + (f" at {target}" if target else "")]
         if f.state is FlightState.PLANNED:
-            lines.append(f"Takes off {hhmm(f.takeoff_time)} from "
+            lines.append(f"Takes off {hhmm(f.takeoff_time + self.off)} from "
                          f"{self.th.objectives[sq.base_id].name if sq.base_id in self.th.objectives else sq.base_id}")
         else:
             alt = f", {f.alt_m / FT:,.0f} ft" if f.alt_m is not None else ""
@@ -796,9 +861,13 @@ class Picture:
             lines.append(f"Player flight: {taken} of {f.aircraft} seats taken")
         return "\n".join(lines)
 
-    def _panel(self, threats: list[str], seen: int, coming: list[Flight]) -> list[str]:
+    def _panel(self, seen: int, coming: list[Flight]) -> list[str]:
         st = self.st
-        lines = [clock_text(st.clock), ""]
+        # The campaign's day; the time of day as DCS has it.
+        lines = [f"Day {int(st.clock) // 86400 + 1}  {hhmm(st.clock + self.off)}"]
+        if self.weather:
+            lines.append(self.weather[:1].upper() + self.weather[1:])
+        lines.append("")
         lines += ["FRONT", f"  {self.name(Side.BLUE)} {len(self.held(Side.BLUE))} objectives, "
                            f"{self.name(Side.RED)} {len(self.held(Side.RED))}"]
         battles = sorted(st.battles.values(), key=lambda b: -b.hours)
@@ -813,15 +882,11 @@ class Picture:
             lines.append(f"  {seen} enemy formations in contact")
         # Our players' flights are buttons below this text (spec "flights"); more than fit are counted here.
         if len(coming) > PANEL_FLIGHTS:
-            lines += ["", f"YOUR FLIGHTS: {len(coming) - PANEL_FLIGHTS} more in the next {PANEL_AHEAD_S // 3600} h "
-                          "(below: the first)"]
-        lines += ["", "KNOWN THREATS"] + (threats[:6] or ["  None known"])
-        if len(threats) > 6:
-            lines.append(f"  and {len(threats) - 6} more")
+            lines += ["", f"UPCOMING FLIGHTS: {len(coming) - PANEL_FLIGHTS} more in the next "
+                          f"{PANEL_AHEAD_S // 3600} h (below: the first)"]
         if self.news:
             lines += ["", "NEWS"] + [f"  {n if len(n) <= NEWS_CHARS else n[:NEWS_CHARS - 3] + '...'}"
                                      for n in self.news[-6:][::-1]]
-        lines += ["", "Click a symbol or a route for details."]
         return lines
 
 
@@ -854,9 +919,20 @@ class WarMap:
         self._sending = False
         self.last_bytes = 0
         self.last_build_ms = 0.0
+        self.tod_offset = 0.0     # campaign clock -> DCS time of day (set_mission)
+        self.weather = ""
+
+    def set_mission(self, info: dict[str, Any], clock_now: float) -> None:
+        """The loaded mission's time and weather (the mission bridge's ``query mission``), on each
+        mission connect: the map gives times of day as DCS has them, and the weather."""
+        abs_t = info.get("abs")
+        if isinstance(abs_t, (int, float)):
+            self.tod_offset = float(abs_t) - clock_now
+        self.weather = weather_text(info.get("weather") if isinstance(info.get("weather"), dict) else None)
+        log.info("MAP mission time of day %s, weather: %s", hhmm(clock_now + self.tod_offset), self.weather or "?")
 
     def add_news(self, text: str) -> None:
-        self.news.append(f"{hhmm(self.st.clock)} {text[:1].upper()}{text[1:]}")
+        self.news.append(f"{hhmm(self.st.clock + self.tod_offset)} {text[:1].upper()}{text[1:]}")
 
     def terrain(self) -> Territory:
         """Recomputed only when an objective changes hands."""
@@ -871,7 +947,8 @@ class WarMap:
     def spec(self, *, show: bool, keep_view: bool) -> dict[str, Any]:
         t0 = time.perf_counter()
         spec = Picture(self.st, self.th, self.side, magvar=self.magvar, title=self.title, news=self.news,
-                       side_names=self.side_names, terrain=self.terrain()).build()
+                       side_names=self.side_names, terrain=self.terrain(), tod_offset=self.tod_offset,
+                       weather=self.weather).build()
         spec["show"] = show
         spec["keep_view"] = keep_view
         self.last_build_ms = (time.perf_counter() - t0) * 1000

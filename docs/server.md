@@ -86,7 +86,7 @@ bearing and range from the player to each. Use `build/campaign-smoke.miz`;
 
 ## The war map
 
-Players with the opt-in client script (`lua/client/campaign_client.lua`, version 9) get the war
+Players with the opt-in client script (`lua/client/campaign_client.lua`, version 13) get the war
 in a full-screen native DCS window with the Mission Editor's map (proof P21), built by `campaign/warmap.py`
 for scenarios with a map layer (`southern_syria`). On loading in, a player's script says hello
 and the server sends the map hidden: **Ctrl+Shift+F8** shows or hides it; `-map` in chat sends it
@@ -111,11 +111,13 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
   Click a site: ours give launchers and vehicles; the enemy's a rough count ("3 or 4
   launchers"), whether it's reported damaged, and its radar.
 - **Flights:** own flights in the air (players' flights in yellow). No routes by default. Select
-  a flight (the panel's **Your flights** buttons, the first 6 player flights in the next 3 hours,
-  each with its time to take-off as BMS shows it, `T-0:19:32`, counted down live on mission time;
+  a flight (the panel's **Upcoming flights** buttons, the first 6 player flights in the next 3 hours,
+  each with its time to take-off as BMS shows it, `T-0:19:32`, counted down live on mission time,
+  and marked `>` when selected and `+` when in the selected flight's package;
   or a flight's symbol in the air) to see its plan: its route in white with each waypoint's time
-  and time from take-off (`WP1 00:42 +0:12`, `TGT`, `STN` for a station, `LAND`), its target, the
-  other flights of its package as yellow dashed routes with their time on target, and every enemy
+  and time from take-off (`WP1 00:42 +0:12`, `TGT`, `STN` for a station, `LAND`), its own target
+  (a SEAD flight's SAM site, a moving target where it is now, else its attack point; not the
+  package's), the other flights of its package as yellow dashed routes with their time on target, and every enemy
   air defence site along the way. The view moves to the plan, zooming out only if it doesn't fit.
   Times are planned: take-off, then each leg at the flight's cruise speed (the package's slowest)
   unless the waypoint has its own time, plus any time on station.
@@ -123,8 +125,15 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
   as targets, with their damage; formations only within 8 nm of blue ground or forces, with a
   rough strength ("about 25 vehicles") and no names; flights only while airborne within 80 nm
   of a blue airbase or 150 nm of a blue AWACS, with their kind (fighters, attack) but not type.
-- **Panel:** day and time, objectives held, battles, known threats by type, the latest war news,
-  and the player flights' buttons.
+- **Panel:** the campaign's day and the time of day as DCS has it, the mission's weather in a line
+  (clouds, visibility, wind speed, temperature; the mission bridge's `query mission`, asked on each
+  mission connect), objectives held, battles, the latest war news, and the **Upcoming flights**
+  buttons. A scale bar on the map's bottom-left corner (a round distance in nm) follows the zoom. All the map's times are times
+  of day. No summary of threats: the map shows them.
+- **Opens by itself** when the player goes blue, about a second after the slot screen has gone
+  (or as soon as the first map arrives): for the host, on choosing blue (a slot or blue's
+  spectators) and closing the slot screen; for a client, on taking a blue aircraft slot.
+  `AUTO_OPEN_MAP` in the client script.
 
 ## Settings
 

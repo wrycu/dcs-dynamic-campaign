@@ -3,7 +3,7 @@ import unittest
 
 from campaign.air import AirConfig, AirSpawner
 from campaign.air_bubble import fly
-from campaign.flight_spawn import Takeoff, build_flight_spawn
+from campaign.flight_spawn import BLUE_NUMBERS, Takeoff, assign_number, build_flight_spawn, callsign_of
 from campaign.model import (CampaignState, Flight, FlightState, Pos, Side, SpawnState, Squadron, StartMode,
                             Waypoint)
 from campaign.payloads import UnknownPayload, dcs_payload
@@ -103,6 +103,25 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual([u["callsign"] for u in g["units"]],
                          [{1: 2, 2: 4, 3: 1, "name": "Springfield41"}, {1: 2, 2: 4, 3: 2, "name": "Springfield42"}])
         self.assertEqual([u["onboard_num"] for u in g["units"]], ["131", "132"])
+
+    def test_a_flights_callsign_is_its_units(self):
+        self.assertEqual(callsign_of(Side.BLUE, 13), "Springfield 4")   # its units: Springfield41, 42
+        self.assertEqual(callsign_of(Side.BLUE, 72), "Pontiac 9")
+        self.assertEqual(callsign_of(Side.RED, 1), "11")                # its units: 111, 112
+
+    def test_numbers_are_unique_on_a_side_while_flying(self):
+        st = CampaignState(theater_map="Syria", clock=0, sides={})
+        st.squadrons["b"] = Squadron("b", Side.BLUE, "VFA", "FA-18C_hornet", "x", {"CAP"}, 99, 0, 99, True)
+        numbers = []
+        for i in range(BLUE_NUMBERS):
+            f = flight(fid=f"f{i}")
+            f.squadron_id = "b"
+            f.number = assign_number(st, Side.BLUE, f.id)
+            st.flights[f.id] = f
+            numbers.append(f.number)
+        self.assertEqual(sorted(numbers), list(range(1, BLUE_NUMBERS + 1)))   # every callsign once
+        st.flights["f0"].state = FlightState.LANDED                          # its number is free again
+        self.assertEqual(assign_number(st, Side.BLUE, "new"), st.flights["f0"].number)
 
     def test_red_numeric_callsigns(self):
         g = build_flight_spawn(flight(), "MiG-29A", Side.RED, number=1).data["group"]
@@ -217,6 +236,13 @@ class AirSpawnerTests(unittest.IsolatedAsyncioTestCase):
         await self.air.spawn(b)
         boards = [u["onboard_num"] for op, d in self.dcs.calls if op == "spawn_group" for u in d["group"]["units"]]
         self.assertEqual(len(set(boards)), 4)
+
+    async def test_a_planned_number_is_the_spawned_callsign(self):
+        f = self.add(flight())
+        f.number = 13
+        await self.air.spawn(f)
+        units = self.dcs.calls[-1][1]["group"]["units"]
+        self.assertEqual([u["callsign"] for u in units], [231, 232])   # red: callsign_of(RED, 13) == "23"
 
     async def test_aggregate_and_resume_in_the_air(self):
         f = self.add(flight())

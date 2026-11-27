@@ -98,11 +98,15 @@ here; "cautious" or "offensive" elsewhere), so the same planner can play other k
   route or target is inside a known SAM envelope, plus an escort if enemy fighters can reach it.
   SEAD arrives 2 minutes before the TOT and an escort with the main flight.
 - **Flights** are 2-ships (strikes up to 4), from a squadron with the role and ready aircraft, at
-  the squadron's base. Callsigns come from the existing scheme ([air](air.md)).
+  the squadron's base. Each gets its flight number when it's planned (`Flight.number`): blue a
+  callsign of its own among the side's flights still planned or flying (Enfield 1 to Pontiac 9),
+  red a numeric one. The flight is called by it everywhere (status, news, the war map) and its
+  units in DCS have it: Uzi 4 flies as Uzi 4-1 and 4-2 ([air](air.md)).
 - **Route:** takeoff, climb point, an ingress point (IP) 15–20 nm from the target, the target
   with its action (CAS zone, BOMB point, SEAD zone, ORBIT for CAP), an egress point, then land at
-  the home base. It goes around known SAM envelopes where that adds little, and otherwise relies
-  on SEAD. Altitudes are per mission: CAS 15,000–20,000 ft, strike 20,000–25,000 ft, CAP
+  the home base. It's meant to go around known SAM envelopes where that adds little, and
+  otherwise rely on SEAD; today the legs are straight lines (backlog item 45, after Run 27).
+  Altitudes are per mission: CAS 15,000–20,000 ft, strike 20,000–25,000 ft, CAP
   25,000 ft or more. Speeds are per leg (item 5, done).
 - **Times:** the TOT is chosen and the rest worked back from cruise speeds. Players get a
   start-up allowance before takeoff: about 5 minutes for a hot start, 20 for a cold one.

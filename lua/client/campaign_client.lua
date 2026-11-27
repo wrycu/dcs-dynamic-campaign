@@ -37,7 +37,7 @@ network (DCS can't send RPC to itself).
 Lua 5.1 (DCS).
 ]]
 
-local VERSION = 9
+local VERSION = 13
 
 local function log_info(msg) log.write("CAMPAIGN-CLIENT", log.INFO, msg) end
 local function log_error(msg) log.write("CAMPAIGN-CLIENT", log.ERROR, msg) end
@@ -118,6 +118,15 @@ local function static(x, y, w, h, text, size, color)
                tooltip = "", zindex = 1, angle = 0, pivotPoint = { x = 0, y = 0 } },
     skin = { params = { name = "staticSkin", textWrapping = true },
              states = { released = { [1] = { text = { color = color or "0xffffffff", font = FONT, fontSize = size } } } } } }
+end
+
+-- A filled strip (the scale bar).
+local function bar(x, y, w, h, color)
+  return { type = "Static",
+    params = { bounds = { x = x, y = y, w = w, h = h }, text = "", enabled = true, visible = true,
+               tooltip = "", zindex = 1, angle = 0, pivotPoint = { x = 0, y = 0 } },
+    skin = { params = { name = "staticSkin" },
+             states = { released = { [1] = { bkg = { center_center = color } } } } } }
 end
 
 local function button(x, y, w, h, text)
@@ -345,6 +354,8 @@ end
 --                         (version 9) name, tail, takeoff_in = seconds: the label is
 --                         "<name>  T-h:mm:ss  <tail>", counted down here on DCS model time
 --   flights_none = "..."  what the flights block says when there are none (one line)
+--   packages = { ["f:1"] = "pkg_1", ... }   (version 10) each selectable flight's package: the
+--                         list marks the selected flight "> " and its package's other flights "+ "
 --   objects = {           all positions in mission metres (x north, y east), colours {r, g, b, a} 0..1
 --     { kind = "icon", x, y, sym = SYMBOLS key, color, heading (deg), label, info }
 --     { kind = "text", x, y, text, color, fill, size, info }                   (drawing layer)
@@ -359,6 +370,8 @@ end
 local NM = 1852
 local MAP_PANEL_W = 340
 local MAP_FLIGHTS = 6      -- flight buttons in the panel
+local AUTO_OPEN_MAP = true -- open the map when this player takes a blue slot (Run 27 ask)
+local SCALE_NICE = { 1, 2, 5, 10, 20, 25, 50, 100, 200, 500 }   -- scale bar lengths, nm
 local SYMBOLS = {
   tank = "P0091000001", ifv = "P0091000002", sam_long = "P0091000013", sam_medium = "P0091000012",
   sam_short = "P0091000011", aaa = "P0091000014", fighter = "P0091000024", helo = "P0091000021",
@@ -498,12 +511,15 @@ local function clear_objects()
   pcall(function() map_view:clearDrawObjects() end)
 end
 
+local tick_flights   -- the flight list's labels (below)
+
 -- Draw map_spec again for the current zoom and selection (a refresh, a click, crossing the zoom).
 local function redraw(why)
   if not (map_view and map_spec) then return end
   local t0 = os.clock()
   clear_objects()
   local drawn, failed = draw_objects(map_spec.objects)
+  if map_window then map_tick = -1e9; pcall(tick_flights) end   -- the list's marks follow the selection
   if why then
     map_event("map", string.format("%s: drawn in %.0f ms: %s%s", why, (os.clock() - t0) * 1000, drawn,
                                     #failed > 0 and ("; FAILED " .. table.concat(failed, "; ")) or ""))
@@ -524,11 +540,23 @@ local function t_minus(dt)
   return string.format("T%s%d:%02d:%02d", sign, math.floor(s / 3600), math.floor(s / 60) % 60, s % 60)
 end
 
+-- "> " the selected flight, "+ " a flight of its package, else two spaces.
+local function mark(f)
+  if not map_selected or not f.select then return "   " end
+  if f.select == map_selected then return ">  " end
+  local pk = map_spec and type(map_spec.packages) == "table" and map_spec.packages or {}
+  if pk[map_selected] and pk[map_selected] == pk[f.select] then return "+  " end
+  return "   "
+end
+
 local function flight_label(f, now)
+  local text
   if f.takeoff_in and f.name and map_flights_t and now then
-    return tostring(f.name) .. "  " .. t_minus(tonumber(f.takeoff_in) - (now - map_flights_t)) .. "  " .. tostring(f.tail or "")
+    text = tostring(f.name) .. "  " .. t_minus(tonumber(f.takeoff_in) - (now - map_flights_t)) .. "  " .. tostring(f.tail or "")
+  else
+    text = tostring(f.label or f.select)
   end
-  return tostring(f.label or f.select)
+  return mark(f) .. text
 end
 
 -- The panel's flight buttons, from spec.flights.
@@ -542,15 +570,16 @@ local function set_flights(spec)
       b:setVisible(f ~= nil)
     end
   end
-  map_window.txtFlights:setText(#list > 0 and "YOUR FLIGHTS (click one for its plan)"
-                                or ("YOUR FLIGHTS: " .. tostring(spec.flights_none or "none")))
+  map_window.txtFlights:setText(#list > 0 and "UPCOMING FLIGHTS"
+                                or ("UPCOMING FLIGHTS: " .. tostring(spec.flights_none or "none")))
 end
 
 -- Once a second while the map is open: count the take-offs down.
-local function tick_flights()
+tick_flights = function()
   if not (map_window and map_spec and map_window:getVisible()) then return end
   if os.clock() - map_tick < 1 then return end
   map_tick = os.clock()
+  pcall(update_scale)   -- also after a button's fit or "Back to the front"
   local list = type(map_spec.flights) == "table" and map_spec.flights or {}
   local now = model_time()
   for i = 1, math.min(#list, MAP_FLIGHTS) do
@@ -587,7 +616,28 @@ local function bring_into_view(view, box)
   end
 end
 
+-- The scale bar: the longest round distance that fits in 220 px at the current zoom.
+local function update_scale()
+  if not (map_window and map_view) then return end
+  local _, ew = view_span(map_view)
+  local mpp = ew / math.max(map_vw, 1)          -- metres per pixel
+  if mpp <= 0 then return end
+  local nm = SCALE_NICE[1]
+  for _, n in ipairs(SCALE_NICE) do
+    if n * NM / mpp <= 220 then nm = n end
+  end
+  local px = math.max(2, math.floor(nm * NM / mpp + 0.5))
+  local x, y = map_window.pnlScale:getBounds()
+  map_window.pnlScale:setBounds(x, y, px, 4)
+  local _, ty, tw, th = map_window.txtScale:getBounds()
+  map_window.txtScale:setBounds(x + px + 8, ty, tw, th)
+  map_window.txtScale:setText(nm .. " nm")
+  local bx, by, _, bh = map_window.pnlScaleBg:getBounds()
+  map_window.pnlScaleBg:setBounds(bx, by, px + 8 + 70 + 16, bh)
+end
+
 local function check_zoom(view)
+  pcall(update_scale)
   local z = is_zoomed(view)
   if z ~= map_zoomed then
     map_zoomed = z
@@ -682,8 +732,13 @@ local function map_window_table(W, H)
   local flights_y = info_y - 8 - 24 - MAP_FLIGHTS * 32
   local children = {
     txtPanel = static(x0, HEADER + 8, pw, flights_y - HEADER - 16, "", 14, "0xd0d0d0ff"),
-    txtFlights = static(x0, flights_y, pw, 22, "YOUR FLIGHTS", 14, "0xd0d0d0ff"),
-    txtInfo = static(x0, info_y, pw, info_h, "Click a symbol or a route for details.", 14, "0xffe080ff"),
+    -- The scale bar, on the map's bottom-left corner (Run 27): a filled strip as long as the
+    -- distance in its label (update_scale), on a dark backing. Moved above the map view in build_map.
+    pnlScaleBg = bar(12, H - 48, 200, 36, "0x000000a0"),
+    pnlScale = bar(20, H - 32, 100, 4, "0xffffffff"),
+    txtScale = static(128, H - 42, 80, 22, "", 14, "0xffffffff"),
+    txtFlights = static(x0, flights_y, pw, 22, "UPCOMING FLIGHTS", 14, "0xd0d0d0ff"),
+    txtInfo = static(x0, info_y, pw, info_h, "", 14, "0xffe080ff"),
     btnModeMap = button(x0, buttons_y, bw, 28, "Map"),
     btnModeAlt = button(x0 + bw + pad, buttons_y, bw, 28, "Terrain"),
     btnModeSat = button(x0 + 2 * (bw + pad), buttons_y, bw, 28, "Satellite"),
@@ -737,6 +792,14 @@ local function build_map()
   map_window = DialogLoader.spawnWidget("dialog", map_window_table(W, H), {}, "campaign_map")
   map_view = GUIMapView.new()
   map_window:insertWidget(map_view)
+  -- The scale bar's widgets came with the window, under the map view: put them back on top.
+  local ok_s, err_s = pcall(function()
+    for _, k in ipairs({ "pnlScaleBg", "pnlScale", "txtScale" }) do
+      map_window:removeWidget(map_window[k])
+      map_window:insertWidget(map_window[k])
+    end
+  end)
+  map_event("map", "step scale bar " .. (ok_s and "over the map" or ("failed: " .. tostring(err_s))))
   map_view:setBounds(0, HEADER, W - MAP_PANEL_W, H - HEADER)
   map_vw, map_vh = W - MAP_PANEL_W, H - HEADER
   map_view:setBkgColor({ 107 / 255, 175 / 255, 248 / 255 })
@@ -796,8 +859,15 @@ local function screen_changed()
   return ok and (sw ~= map_size[1] or sh ~= map_size[2])
 end
 
+local auto_open = nil      -- os.clock() at which to open the map (a blue slot was just taken)
+local auto_pending = false -- ...but no map had come yet: open the next one that does
+
 local function open_map(spec)
   local t0 = os.clock()
+  if auto_pending and spec.show == false then   -- the first map after taking a blue slot
+    auto_pending = false
+    spec.show = true
+  end
   if map_window and not map_window:getVisible() and screen_changed() then close_map() end
   -- show = false and the window isn't on screen: just keep it (the hotkey draws it). A refresh
   -- while it's hidden costs nothing then.
@@ -825,6 +895,7 @@ local function open_map(spec)
   if not ok_mode then map_event("map", "mode failed: " .. tostring(err_mode)) end
   if fresh or not spec.keep_view then frame(spec) end
   local drawn, failed = redraw()
+  pcall(update_scale)
   map_stale = false
   map_window:setVisible(true)
   map_event("map", string.format("%s in %.0f ms: %s%s", fresh and "shown" or "redrawn", (os.clock() - t0) * 1000,
@@ -866,6 +937,47 @@ function callbacks.onPlayerChangeSlot(id)
   end
 end
 
+-- Opening the map by itself (AUTO_OPEN_MAP): when this player's side or slot changes to blue, the
+-- map opens once the slot screen has gone. Run 27: the host choosing blue got no
+-- onPlayerChangeSlot, only a coalition change, so both are watched here. The host's game is
+-- paused while its slot screen is open, so unpaused means it's gone (a blue spectator too); a
+-- client picks blue on its slot screen before an aircraft, so for a client it's an aircraft slot.
+local slot_key, slot_armed, slot_check = nil, false, 0
+
+local function watch_slot()
+  if os.clock() - slot_check < 0.5 then return end
+  slot_check = os.clock()
+  local me = net.get_my_player_id()
+  local side = tonumber(net.get_player_info(me, "side")) or 0
+  local slot = tostring(net.get_player_info(me, "slot") or "")
+  local key = side .. ":" .. slot
+  if key ~= slot_key then
+    log_info("map: now side " .. key)
+    slot_key = key
+    slot_armed = side == 2 and (Sim.isServer() or (slot ~= "" and slot ~= "0"))
+  end
+  if slot_armed then
+    local paused = false
+    pcall(function() paused = Sim.getPause() end)
+    if not paused then
+      slot_armed = false
+      auto_open = os.clock() + 1.0
+      log_info("map: opens in a moment (blue)")
+    end
+  end
+end
+
+local function auto_open_map()
+  if not auto_open or os.clock() < auto_open then return end
+  auto_open = nil
+  if map_window and map_window:getVisible() then return end
+  if map_spec then
+    toggle_map()
+  else
+    auto_pending = true   -- the server's first map isn't here yet
+  end
+end
+
 function callbacks.onMissionLoadEnd()
   pending_join = false
   if Sim.isMultiplayer() then   -- a client, or the host of a server hosted from DCS
@@ -877,9 +989,22 @@ end
 
 function callbacks.onSimulationFrame()
   pcall(tick_flights)
+  if AUTO_OPEN_MAP then
+    local ok, err = pcall(watch_slot)
+    if not ok and slot_check >= 0 then
+      log_error("map slot watch: " .. tostring(err))
+      slot_check = math.huge   -- once
+    end
+  end
+  if auto_open then
+    local ok, err = pcall(auto_open_map)
+    if not ok then log_error("map auto open: " .. tostring(err)) end
+  end
 end
 
 function callbacks.onSimulationStop()
+  auto_open, auto_pending = nil, false
+  slot_key, slot_armed, slot_check = nil, false, 0
   close_web()
   close_map()
   if campaign_window then pcall(function() campaign_window:kill() end) end
