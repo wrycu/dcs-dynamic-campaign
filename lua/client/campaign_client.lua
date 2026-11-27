@@ -37,7 +37,7 @@ network (DCS can't send RPC to itself).
 Lua 5.1 (DCS).
 ]]
 
-local VERSION = 13
+local VERSION = 14
 
 local function log_info(msg) log.write("CAMPAIGN-CLIENT", log.INFO, msg) end
 local function log_error(msg) log.write("CAMPAIGN-CLIENT", log.ERROR, msg) end
@@ -356,6 +356,9 @@ end
 --   flights_none = "..."  what the flights block says when there are none (one line)
 --   packages = { ["f:1"] = "pkg_1", ... }   (version 10) each selectable flight's package: the
 --                         list marks the selected flight "> " and its package's other flights "+ "
+--   joins = { ["f:1"] = { label, key, ok }, ... }   (version 14) the join button while that flight
+--                         is selected: pressing it sends campaignClick(key) ("join:f:1", "leave:f:1");
+--                         ok = false greys it out (full, taken off)
 --   objects = {           all positions in mission metres (x north, y east), colours {r, g, b, a} 0..1
 --     { kind = "icon", x, y, sym = SYMBOLS key, color, heading (deg), label, info }
 --     { kind = "text", x, y, text, color, fill, size, info }                   (drawing layer)
@@ -512,6 +515,7 @@ local function clear_objects()
 end
 
 local tick_flights   -- the flight list's labels (below)
+local update_join    -- the join button (below)
 
 -- Draw map_spec again for the current zoom and selection (a refresh, a click, crossing the zoom).
 local function redraw(why)
@@ -519,7 +523,7 @@ local function redraw(why)
   local t0 = os.clock()
   clear_objects()
   local drawn, failed = draw_objects(map_spec.objects)
-  if map_window then map_tick = -1e9; pcall(tick_flights) end   -- the list's marks follow the selection
+  if map_window then map_tick = -1e9; pcall(tick_flights); pcall(update_join) end   -- they follow the selection
   if why then
     map_event("map", string.format("%s: drawn in %.0f ms: %s%s", why, (os.clock() - t0) * 1000, drawn,
                                     #failed > 0 and ("; FAILED " .. table.concat(failed, "; ")) or ""))
@@ -575,6 +579,20 @@ local function set_flights(spec)
 end
 
 -- Once a second while the map is open: count the take-offs down.
+-- The join button: shown while a flight players can fly is selected (spec.joins).
+update_join = function()
+  if not map_window then return end
+  local joins = map_spec and type(map_spec.joins) == "table" and map_spec.joins or {}
+  local j = map_selected and joins[map_selected]
+  if type(j) ~= "table" then
+    map_window.btnJoin:setVisible(false)
+    return
+  end
+  map_window.btnJoin:setText(tostring(j.label or "Join"))
+  map_window.btnJoin:setEnabled(j.ok == true)
+  map_window.btnJoin:setVisible(true)
+end
+
 tick_flights = function()
   if not (map_window and map_spec and map_window:getVisible()) then return end
   if os.clock() - map_tick < 1 then return end
@@ -729,7 +747,8 @@ local function map_window_table(W, H)
   local info_h = math.max(200, math.floor(H * 0.25))
   local buttons_y = H - 3 * 34 - 8
   local info_y = buttons_y - info_h - 8
-  local flights_y = info_y - 8 - 24 - MAP_FLIGHTS * 32
+  local join_y = info_y - 8 - 30
+  local flights_y = join_y - 8 - 24 - MAP_FLIGHTS * 32
   local children = {
     txtPanel = static(x0, HEADER + 8, pw, flights_y - HEADER - 16, "", 14, "0xd0d0d0ff"),
     -- The scale bar, on the map's bottom-left corner (Run 27): a filled strip as long as the
@@ -743,6 +762,7 @@ local function map_window_table(W, H)
     btnModeAlt = button(x0 + bw + pad, buttons_y, bw, 28, "Terrain"),
     btnModeSat = button(x0 + 2 * (bw + pad), buttons_y, bw, 28, "Satellite"),
     btnCenter = button(x0, buttons_y + 34, pw, 28, "Back to the front"),
+    btnJoin = button(x0, join_y, pw, 28, "Join"),
     btnCloseMap = button(x0, buttons_y + 68, pw, 28, "Close (" .. MAP_HOTKEY .. ")"),
   }
   for i = 1, MAP_FLIGHTS do
@@ -848,6 +868,16 @@ local function build_map()
       redraw("selected " .. tostring(f.select))
     end)
   end
+  map_window.btnJoin:setVisible(false)
+  map_window.btnJoin:addChangeCallback(function()
+    local joins = map_spec and type(map_spec.joins) == "table" and map_spec.joins or {}
+    local j = map_selected and joins[map_selected]
+    if type(j) ~= "table" or not j.ok or not j.key or j.key == "" then return end
+    map_event("map_click", "button " .. tostring(j.key))
+    to_server("campaignClick", tostring(j.key))
+    map_window.btnJoin:setText("...")       -- the server answers with a fresh map
+    map_window.btnJoin:setEnabled(false)
+  end)
   map_window.btnCloseMap:addChangeCallback(function() map_window:setVisible(false) end)
   map_window.onClose = function() map_window:setVisible(false) end
 end

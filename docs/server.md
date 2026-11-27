@@ -86,7 +86,7 @@ bearing and range from the player to each. Use `build/campaign-smoke.miz`;
 
 ## The war map
 
-Players with the opt-in client script (`lua/client/campaign_client.lua`, version 13) get the war
+Players with the opt-in client script (`lua/client/campaign_client.lua`, version 14) get the war
 in a full-screen native DCS window with the Mission Editor's map (proof P21), built by `campaign/warmap.py`
 for scenarios with a map layer (`southern_syria`). On loading in, a player's script says hello
 and the server sends the map hidden: **Ctrl+Shift+F8** shows or hides it; `-map` in chat sends it
@@ -130,6 +130,13 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
   mission connect), objectives held, battles, the latest war news, and the **Upcoming flights**
   buttons. A scale bar on the map's bottom-left corner (a round distance in nm) follows the zoom. All the map's times are times
   of day. No summary of threats: the map shows them.
+- **Joining a flight** (a first step): with a player flight selected, a button under the list says
+  `Join Uzi 4 (2 of 2 seats free)`, `Leave Uzi 4 (you're Uzi 4-1)`, or why not (full, taken off).
+  Joining gives the player the first free seat (`Flight.player_seats`, saved; one flight at a time:
+  joining another leaves the first), answers in chat and sends the map again. The flight's details
+  list who has which seat; its button shows `1/2 seats`. Nothing more yet: it doesn't put the
+  player in the jet, and the seat doesn't hold the flight for them (backlog item 2). Players are
+  known by ucid, learnt from `player_connect` and from the click itself.
 - **Opens by itself** when the player goes blue, about a second after the slot screen has gone
   (or as soon as the first map arrives): for the host, on choosing blue (a slot or blue's
   spectators) and closing the slot screen; for a client, on taking a blue aircraft slot.

@@ -204,7 +204,7 @@ class IntelTests(unittest.TestCase):
         self.assertEqual(routes, [])        # routes only while their flight is selected
         self.assertIn("Day 2  02:05", spec["panel"])
         self.assertEqual([b["label"] for b in spec["flights"]],   # the panel's buttons; "later" is 4 h out
-                         ["CAP1  CAP  enroute  2 seats", "BAI2  BAI  T-0:30:00  2 seats"])
+                         ["CAP1  CAP  enroute  0/2 seats", "BAI2  BAI  T-0:30:00  0/2 seats"])
 
     def test_a_flight_button_selects_its_plan(self):
         w, k = self.w, 1000
@@ -214,8 +214,8 @@ class IntelTests(unittest.TestCase):
         w.unit("shilka", Side.RED, 0, 40 * k, {"ZSU-23-4 Shilka": 2}, GroundRole.AAA)
         spec = w.picture()
         [button] = spec["flights"]
-        self.assertEqual(button["label"], "CAS3  CAS  T-2:00:00  2 seats")
-        self.assertEqual((button["name"], button["takeoff_in"], button["tail"]), ("CAS3  CAS", 7200, "2 seats"))
+        self.assertEqual(button["label"], "CAS3  CAS  T-2:00:00  0/2 seats")
+        self.assertEqual((button["name"], button["takeoff_in"], button["tail"]), ("CAS3  CAS", 7200, "0/2 seats"))
         self.assertEqual(warmap.t_minus(-75), "T+0:01:15")
         self.assertEqual(button["select"], "f:cas3")
         self.assertIn("Air defence on the route: ZSU-23-4", button["info"])
@@ -372,6 +372,50 @@ class WarMapTests(unittest.IsolatedAsyncioTestCase):
         m.on_player({"kind": "client_hello", "player_id": 3}, self.bg)
         with self.assertLogs("campaign", "WARNING"):
             await self.settle()
+
+    async def test_join_and_leave_a_flight(self):
+        w = self.w
+        w.flight("bai2", "blue_sq", FlightState.PLANNED, mission="BAI", takeoff=w.state.clock + 1800, player=True)
+        w.flight("cas3", "blue_sq", FlightState.PLANNED, mission="CAS", takeoff=w.state.clock + 3600, player=True)
+        self.map.on_player({"kind": "client_hello", "player_id": 3, "version": 14}, self.bg)
+        await self.settle()
+        joins = self.hooks.calls[0][1]["args"][0]["joins"]
+        self.assertEqual(joins["f:bai2"], {"label": "Join BAI2 (2 of 2 seats free)", "key": "join:f:bai2", "ok": True})
+
+        def click(key):
+            return self.map.on_player({"kind": "client_click", "player_id": 3, "ucid": "abc", "name": "Viper",
+                                       "key": key}, self.bg)
+        self.assertTrue(click("join:f:bai2"))
+        await self.settle()
+        self.assertEqual(w.state.flights["bai2"].player_seats, {1: "abc"})
+        self.assertIn("You're BAI2-1: BAI, take-off 02:35 (T-0:30:00)", self.hooks.calls[-2][1]["text"])
+        spec = self.hooks.calls[-1][1]["args"][0]           # sent again at once, the view kept
+        self.assertEqual((spec["show"], spec["keep_view"]), (True, True))
+        self.assertEqual(spec["joins"]["f:bai2"]["label"], "Leave BAI2 (you're BAI2-1)")
+        button = next(b for b in spec["flights"] if b["select"] == "f:bai2")
+        self.assertEqual(button["tail"], "1/2 seats")
+        self.assertIn("BAI2-1: you", button["info"])
+        # One flight at a time: joining another leaves the first.
+        click("join:f:cas3")
+        await self.settle()
+        self.assertEqual((w.state.flights["bai2"].player_seats, w.state.flights["cas3"].player_seats),
+                         ({1: None}, {1: "abc"}))
+        self.assertIn("You've left BAI2", self.hooks.calls[-2][1]["text"])
+        click("leave:f:cas3")
+        await self.settle()
+        self.assertEqual(w.state.flights["cas3"].player_seats, {1: None})
+
+    def test_who_cant_join(self):
+        w = self.w
+        f = w.flight("bai2", "blue_sq", FlightState.PLANNED, mission="BAI", takeoff=w.state.clock + 1800, player=True)
+        self.assertEqual(self.map.join(3, "join", "bai2"), "Can't tell who you are yet: try again in a moment")
+        self.map.on_player({"kind": "player_connect", "player_id": 3, "ucid": "abc", "name": "Viper"}, self.bg)
+        f.player_seats = {1: "x", 2: "y"}
+        self.assertEqual(self.map.join(3, "join", "bai2"), "BAI2 is full")
+        f.player_seats, f.state = {}, FlightState.ENROUTE
+        self.assertEqual(self.map.join(3, "join", "bai2"), "BAI2 has taken off")
+        f.player_preferred = False
+        self.assertEqual(self.map.join(3, "join", "bai2"), "That flight isn't one players can fly")
 
     def test_news_and_territory_cache(self):
         self.map.add_news("coalition takes East Town")

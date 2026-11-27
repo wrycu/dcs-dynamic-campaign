@@ -40,7 +40,9 @@ Southern Syria (first DCS run is Run 24). Players can't claim flights yet. Neede
   times on target and loadouts. Packages go where the fighting is, so players' choices are where
   it matters.
 - **Choosing a flight.** Players see the flights their side has planned and pick one to fly,
-  BMS-style: by mission, target, takeoff time and base. The flight is held for them; if nobody
+  BMS-style: by mission, target, takeoff time and base. Started (after Run 27): the war map's join
+  button gives the player a seat in the selected flight (`Flight.player_seats`); still to do: put
+  them in the jet from there, hold the flight for them, and what a seat means to the planner. The flight is held for them; if nobody
   takes it before its deadline, the AI flies it or it is cancelled (`Flight.player_preferred`
   is already in the model).
 - **Where to join.** Join a flight on the ramp before takeoff, or one that is already airborne.

@@ -128,6 +128,11 @@ def few(n: int) -> str:
     return about(n)
 
 
+def seat_of(f: Flight, ucid: str) -> int | None:
+    """The player's seat in the flight (1-based), or None."""
+    return next((seat for seat, who in sorted(f.player_seats.items()) if who == ucid), None)
+
+
 def t_minus(dt: float) -> str:
     """Time to take-off, as BMS shows it: T-0:19:32 (T+ once it's past)."""
     s = int(round(dt))
@@ -469,7 +474,8 @@ class Picture:
 
     def __init__(self, state: CampaignState, theater: Theater, side: Side = Side.BLUE, *, magvar: float = 0.0,
                  title: str = "Campaign", news: Iterable[str] = (), side_names: dict[Side, str] | None = None,
-                 terrain: Territory | None = None, tod_offset: float = 0.0, weather: str = "") -> None:
+                 terrain: Territory | None = None, tod_offset: float = 0.0, weather: str = "",
+                 me: str | None = None, pilots: dict[str, str] | None = None) -> None:
         self.st, self.th, self.side, self.magvar = state, theater, side, magvar
         self.enemy = enemy_of(side)
         self.title = title
@@ -478,10 +484,13 @@ class Picture:
         self.terrain = terrain
         self.off = tod_offset      # campaign clock + this = DCS time of day (seconds since the mission date's midnight)
         self.weather = weather
+        self.me = me                  # the viewer's ucid, if known: their seat in a flight
+        self.pilots = pilots or {}    # ucid -> name, for the seats
         self.objects: list[dict[str, Any]] = []
         self.enemy_ad: list[tuple[GroundUnit, str, float, dict[str, Any]]] = []
         self.flight_buttons: list[dict[str, Any]] = []
         self.packages: dict[str, str] = {}      # selectable flight's group -> its package
+        self.joins: dict[str, dict[str, Any]] = {}   # selectable flight's group -> its join button
 
     # ----- helpers -----
 
@@ -577,7 +586,7 @@ class Picture:
         self.objects = [o for o in self.objects if o.get("groups") != [] or o.get("detail")]
         spec = {"title": self.title, "mode": "map", "panel": self._panel(seen, flights),
                 "objects": self.objects, "detail_scale": round(DETAIL_SCALE_M), "flights": self.flight_buttons,
-                "packages": self.packages,
+                "packages": self.packages, "joins": self.joins,
                 "flights_none": f"none in the next {PANEL_AHEAD_S // 3600} h"}
         c = center or self._centre()
         if c is not None:
@@ -760,6 +769,7 @@ class Picture:
         selectable = {f.id for f in buttons} | {f.id for f in ours if f.state in AIRBORNE and f.pos is not None}
         infos: dict[str, str] = {}
         self.packages = {f"f:{f.id}": f.package_id for f in ours if f.id in selectable}
+        self.joins = {f"f:{f.id}": j for f in ours if f.id in selectable and (j := self.join_button(f))}
         for f in ours:
             sq = st.squadrons[f.squadron_id]
             pkg = st.packages.get(f.package_id)
@@ -798,7 +808,8 @@ class Picture:
                                          "text": f"{f.callsign} {f.mission} {hhmm(at[1] + self.off)}"})
         for f in buttons:
             plan_pts = [p for p, _, _ in self._plan(f)]
-            name, tail = f"{f.callsign}  {f.mission}", f"{f.aircraft} seats"
+            taken = sum(1 for v in f.player_seats.values() if v)
+            name, tail = f"{f.callsign}  {f.mission}", f"{taken}/{f.aircraft} seats"
             button = {"select": f"f:{f.id}", "info": infos[f.id], "name": name, "tail": tail, **_bounds(plan_pts)}
             if f.state is FlightState.PLANNED:
                 # Counted down by the client between refreshes, on DCS model time (as the campaign clock).
@@ -857,9 +868,27 @@ class Picture:
             hdg = f", heading {self.mag(f.hdg)}" if f.hdg is not None else ""
             lines.append(f"{f.state.name.lower().replace('_', ' ')}{alt}{hdg}")
         if f.player_preferred:
-            taken = sum(1 for v in f.player_seats.values() if v)
-            lines.append(f"Player flight: {taken} of {f.aircraft} seats taken")
+            taken = {seat: who for seat, who in f.player_seats.items() if who}
+            lines.append(f"Player flight: {len(taken)} of {f.aircraft} seats taken")
+            for seat in sorted(taken):
+                who = taken[seat]
+                lines.append(f"  {f.callsign}-{seat}: " + ("you" if who == self.me else self.pilots.get(who, "a player")))
         return "\n".join(lines)
+
+    def join_button(self, f: Flight) -> dict[str, Any] | None:
+        """The panel's join button for a selected flight: {label, key, ok}; None if players can't fly it."""
+        if not f.player_preferred:
+            return None
+        gid = f"f:{f.id}"
+        seat = seat_of(f, self.me) if self.me else None
+        if seat is not None:
+            return {"label": f"Leave {f.callsign} (you're {f.callsign}-{seat})", "key": f"leave:{gid}", "ok": True}
+        if f.state is not FlightState.PLANNED:
+            return {"label": f"{f.callsign} has taken off", "key": "", "ok": False}
+        free = f.aircraft - sum(1 for v in f.player_seats.values() if v)
+        if free <= 0:
+            return {"label": f"{f.callsign} is full", "key": "", "ok": False}
+        return {"label": f"Join {f.callsign} ({free} of {f.aircraft} seats free)", "key": f"join:{gid}", "ok": True}
 
     def _panel(self, seen: int, coming: list[Flight]) -> list[str]:
         st = self.st
@@ -900,6 +929,7 @@ class Viewer:
     player_id: int
     version: int | None = None
     sent: float = 0.0          # real time of the last map sent
+    ucid: str | None = None    # from player_connect or a click: their seat in a flight
 
 
 class WarMap:
@@ -921,6 +951,8 @@ class WarMap:
         self.last_build_ms = 0.0
         self.tod_offset = 0.0     # campaign clock -> DCS time of day (set_mission)
         self.weather = ""
+        self.ucids: dict[int, str] = {}     # player id -> ucid (player_connect, clicks)
+        self.pilots: dict[str, str] = {}    # ucid -> name
 
     def set_mission(self, info: dict[str, Any], clock_now: float) -> None:
         """The loaded mission's time and weather (the mission bridge's ``query mission``), on each
@@ -944,18 +976,19 @@ class WarMap:
                 [pos[o].pos for o, s in self.st.objectives.items() if s.owner is Side.RED and o in pos]))
         return self._terrain[1]
 
-    def spec(self, *, show: bool, keep_view: bool) -> dict[str, Any]:
+    def spec(self, *, show: bool, keep_view: bool, player_id: int | None = None) -> dict[str, Any]:
         t0 = time.perf_counter()
         spec = Picture(self.st, self.th, self.side, magvar=self.magvar, title=self.title, news=self.news,
                        side_names=self.side_names, terrain=self.terrain(), tod_offset=self.tod_offset,
-                       weather=self.weather).build()
+                       weather=self.weather, me=self.ucids.get(player_id) if player_id is not None else None,
+                       pilots=self.pilots).build()
         spec["show"] = show
         spec["keep_view"] = keep_view
         self.last_build_ms = (time.perf_counter() - t0) * 1000
         return spec
 
     async def send(self, player_id: int, *, show: bool, keep_view: bool) -> None:
-        spec = self.spec(show=show, keep_view=keep_view)
+        spec = self.spec(show=show, keep_view=keep_view, player_id=player_id)
         self.last_bytes = len(json.dumps(spec, separators=(",", ":")))
         await self.hooks_call("client_rpc", {"player_id": player_id, "method": "campaignMap", "args": [spec]})
         v = self.viewers.setdefault(player_id, Viewer(player_id))
@@ -982,9 +1015,22 @@ class WarMap:
         if kind == "client_web" and str(data.get("stage", "")).startswith("map"):
             log.info("MAP player %s: %s", pid, str(data.get("detail") or "").replace("\n", " | "))
             return True
+        if kind == "player_connect" and data.get("ucid"):
+            self.ucids[pid] = str(data["ucid"])
+            if data.get("name"):
+                self.pilots[str(data["ucid"])] = str(data["name"])
+            return False
         if kind == "player_disconnect":
             self.viewers.pop(pid, None)
             return False
+        if kind == "client_click" and str(data.get("key", "")).startswith(("join:", "leave:")):
+            if data.get("ucid"):
+                self.ucids[pid] = str(data["ucid"])
+                if data.get("name"):
+                    self.pilots[str(data["ucid"])] = str(data["name"])
+            what, _, gid = str(data["key"]).partition(":")
+            background(self._safe(self._join(pid, what, gid.removeprefix("f:"))))
+            return True
         if kind == "chat_command":
             words = str(data.get("text") or "").lower().split()
             if words[:1] == ["map"]:
@@ -1002,6 +1048,47 @@ class WarMap:
         if not known:   # maybe the server restarted since; maybe no client script: say what it needs
             await self.reply(pid, "War map sent: Ctrl+Shift+F8 shows or hides it. Nothing showing? It needs the "
                                   "campaign client script; F10 > Other > Campaign > Status works without it")
+
+    def join(self, player_id: int, what: str, flight_id: str) -> str:
+        """A player takes a seat in a player flight ("join") or gives it up ("leave"). Returns the
+        reply. Getting into the jet isn't built yet: this only gives them the seat (Flight.player_seats)."""
+        ucid = self.ucids.get(player_id)
+        f = self.st.flights.get(flight_id)
+        sq = self.st.squadrons.get(f.squadron_id) if f else None
+        if ucid is None:
+            return "Can't tell who you are yet: try again in a moment"
+        if f is None or sq is None or sq.side is not self.side or not f.player_preferred:
+            return "That flight isn't one players can fly"
+        if what == "leave":
+            seat = seat_of(f, ucid)
+            if seat is None:
+                return f"You aren't in {f.callsign}"
+            f.player_seats[seat] = None
+            log.info("MAP player %s (%s) leaves %s-%d", player_id, self.pilots.get(ucid, ucid), f.callsign, seat)
+            return f"You've left {f.callsign}"
+        if seat_of(f, ucid) is not None:
+            return f"You're already {f.callsign}-{seat_of(f, ucid)}"
+        if f.state is not FlightState.PLANNED:
+            return f"{f.callsign} has taken off"
+        free = [n for n in range(1, f.aircraft + 1) if not f.player_seats.get(n)]
+        if not free:
+            return f"{f.callsign} is full"
+        left = []
+        for other in self.st.flights.values():   # one flight at a time
+            s_ = seat_of(other, ucid)
+            if s_ is not None:
+                other.player_seats[s_] = None
+                left.append(other.callsign)
+        f.player_seats[free[0]] = ucid
+        log.info("MAP player %s (%s) joins %s-%d%s", player_id, self.pilots.get(ucid, ucid), f.callsign, free[0],
+                 f" (left {', '.join(left)})" if left else "")
+        return (f"You're {f.callsign}-{free[0]}: {f.mission}, take-off {hhmm(f.takeoff_time + self.tod_offset)} "
+                f"({t_minus(f.takeoff_time - self.st.clock)})" + (f". You've left {', '.join(left)}" if left else "") +
+                ". Getting into the jet from the map isn't built yet: the seat is marked yours")
+
+    async def _join(self, player_id: int, what: str, flight_id: str) -> None:
+        await self.reply(player_id, self.join(player_id, what, flight_id))
+        await self.send(player_id, show=True, keep_view=True)   # the button and the seats as they are now
 
     async def _safe(self, coro: Awaitable[Any]) -> None:
         try:
