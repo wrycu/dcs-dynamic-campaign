@@ -17,7 +17,7 @@ Each telemetry report (every 3 s) runs one tick, always in this order:
 3. war: each system's ``advance(t0, t1)``, and the flights that aren't in DCS fly their routes;
 4. planning: each system's ``tick()``;
 5. bubbles: flights recovered or aborted, flights and formations put into or taken out of DCS;
-6. scenario: its ``tick()`` (displays and the like);
+6. scenario: its ``tick()`` (displays and the like), and the war map's refresh (campaign/warmap.py);
 7. save, when ``autosave_s`` has passed and something changed.
 A tick that is still running when the next report arrives makes that report skip its tick;
 the clock catches up on the next one, up to ``MAX_STEP_S`` at once.
@@ -47,6 +47,7 @@ from .persist import Autosave, SaveError, Snapshot, load
 from .protocol import Envelope, Hello, Src, as_list
 from .settings import Settings, SettingsError, load_settings
 from .spawner import GroundSpawner
+from .warmap import WarMap
 
 log = logging.getLogger("campaign")
 
@@ -88,6 +89,8 @@ class Scenario:
     magvar = 0.0       # magnetic variation on the map, degrees east: bearings shown to pilots are magnetic
     home = ""          # the airbase ghost bearings (--ghost BRG/NM) are measured from
     theater: Theater | None = None   # the map layer, if the scenario uses one (squadron bases are objective ids)
+    title = ""         # shown on the war map
+    side_names: dict = {}   # Side -> what players call it, e.g. "Coalition"
     announce = False   # also show flight and formation changes as DCS messages (test scenarios)
 
     def new_state(self) -> CampaignState:
@@ -176,6 +179,15 @@ class Engine:
         self.tasks: set[asyncio.Task[Any]] = set()
         self.autosave = Autosave(save_path, self.snapshot) if save_path else None
         self.last_save = time.monotonic()
+        # The players' war map, for those with the client script: needs the scenario's map layer.
+        self.warmap = WarMap(self.state, scenario.theater, self.hooks_call, magvar=scenario.magvar,
+                             title=scenario.title or scenario.name, side_names=dict(scenario.side_names),
+                             refresh_s=settings.server.map_refresh_s) if scenario.theater else None
+
+    def news(self, text: str) -> None:
+        """War news (battles, captures): on the war map's panel."""
+        if self.warmap is not None:
+            self.warmap.add_news(text)
 
     # ---------- time and DCS ----------
 
@@ -365,6 +377,8 @@ class Engine:
         if kind in ("player_connect", "player_disconnect", "player_slot", "slot_denied"):
             log.info("PLAYER %s %s side=%s slot=%s%s", kind, data.get("name") or data.get("player_id"),
                      data.get("side"), data.get("slot"), f" ({data['reason']})" if data.get("reason") else "")
+        if self.warmap is not None:
+            self.warmap.on_player(data, self.background)
 
     # ---------- the tick ----------
 
@@ -389,6 +403,8 @@ class Engine:
             await self._guard(self.ground.tick(), "ground bubble")
             # 6-7
             await self._guard(self.scenario.tick(self), "scenario")
+            if self.warmap is not None:
+                await self._guard(self.warmap.tick(), "war map")
             self.save_if_due()
 
     async def _guard(self, coro, what: str) -> None:

@@ -81,12 +81,15 @@ class ServerConfig:
     status_s: float = 60.0          # real seconds between status lines on the console
     slot_sides: list[int] = field(default_factory=lambda: [0, 2])   # spectators and blue (PvE)
     player_start: str = "hot"       # players' flights start on the ramp "hot" (engines running) or "cold"
+    map_refresh_s: float = 30.0     # real seconds between war map refreshes (players with the client script)
 
     def __post_init__(self) -> None:
         if not 0 < self.port < 65536:
             raise ValueError("port must be 1-65535")
         if self.autosave_s <= 0 or self.status_s <= 0:
             raise ValueError("autosave_s and status_s must be positive")
+        if self.map_refresh_s < 5:
+            raise ValueError("map_refresh_s must be at least 5")
         if not self.slot_sides or any(s not in (0, 1, 2) for s in self.slot_sides):
             raise ValueError("slot_sides must list sides 0 (spectators), 1 (red) or 2 (blue)")
         if self.player_start not in PLAYER_STARTS:
@@ -95,7 +98,7 @@ class ServerConfig:
 
 SERVER_TYPES: dict[str, type | tuple[type, ...]] = {
     "host": str, "port": int, "save": str, "autosave_s": (int, float), "status_s": (int, float), "slot_sides": list,
-    "player_start": str,
+    "player_start": str, "map_refresh_s": (int, float),
 }
 
 

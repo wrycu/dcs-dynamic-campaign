@@ -6,6 +6,7 @@ who holds which objective, the squadrons, and the ground order of battle. The gr
 and counterattacks. Both sides' planners (campaign/planner.py) plan flights from it, and the air war
 (campaign/air_war.py) resolves those not in DCS. On the campaign server, formations and flights
 spawn around players like any others, and Status shows the front, the battles and the next flights.
+Players with the client script also get the war map (campaign/warmap.py).
 """
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ class SouthernSyria(Scenario):
         self.built = build_state(self.sd)
         self.theater = self.built.theater
         self.magvar = self.sd.magvar
+        self.title = self.sd.title
+        self.side_names = {side: v["name"] for side, v in self.sd.sides.items() if v.get("name")}
 
     def new_state(self) -> CampaignState:
         return self.built.state
@@ -40,6 +43,7 @@ class SouthernSyria(Scenario):
         def news(text: str) -> None:
             log.info("WAR %s %s", engine.clock_text(), text)
             engine.say(text, duration=10, log_it=False)
+            engine.news(text)
         def air_news(text: str) -> None:   # far from players: the log only
             log.info("AIR %s %s", engine.clock_text(), text)
 

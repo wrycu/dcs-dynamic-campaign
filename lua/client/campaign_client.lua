@@ -37,7 +37,7 @@ network (DCS can't send RPC to itself).
 Lua 5.1 (DCS).
 ]]
 
-local VERSION = 3
+local VERSION = 9
 
 local function log_info(msg) log.write("CAMPAIGN-CLIENT", log.INFO, msg) end
 local function log_error(msg) log.write("CAMPAIGN-CLIENT", log.ERROR, msg) end
@@ -154,33 +154,49 @@ local function window_table(spec)
 end
 
 local campaign_window, last_spec = nil, nil
-local shown, shown_bounds = false, nil
+local shown = false
+local hotkey_window = nil
 
--- Run 14k: a window hidden with setVisible(false) no longer gets its hotkey. So it stays
--- "visible" and is shrunk to nothing instead, without a cursor, and grown back to show it.
 local function set_shown(on)
   if not campaign_window then return end
-  if on then
-    local b = shown_bounds
-    campaign_window:setBounds(b.x, b.y, b.w, b.h)
-    campaign_window:setHasCursor(true)
-  else
-    local x, y, w, h = campaign_window:getBounds()
-    if shown then shown_bounds = { x = x, y = y, w = w, h = h } end
-    campaign_window:setHasCursor(false)
-    campaign_window:setBounds(x, y, 0, 0)
-  end
+  campaign_window:setVisible(on)
   shown = on
+end
+
+-- Run 14k: a window hidden with setVisible(false) no longer gets its hotkey. Run 27: neither did
+-- one shrunk to 0x0 (the map's hotkey never fired before the map was open). So both hotkeys live
+-- on a window of their own, 1x1 in the corner, transparent and without a cursor, that stays
+-- visible from mission load to the end (as the Scratchpad mod keeps its window).
+local function make_hotkey_window()
+  if hotkey_window then return end
+  local DialogLoader = require("DialogLoader")
+  hotkey_window = DialogLoader.spawnWidget("dialog", { type = "Window",
+    params = { bounds = { x = 0, y = 0, w = 1, h = 1 }, text = "", enabled = true, draggable = false,
+               hasCursor = false, modal = false, offscreen = false, overlay = false, buddy = false,
+               resizable = false, clipResizeCursor = false, lockFlow = false, layout = {}, zOrder = 99999 },
+    skin = { params = { name = "windowSkin", headerHeight = 0 },
+             states = { released = { [1] = { bkg = { center_center = "0x00000000" } } } } },
+    children = {} }, {}, "campaign_hotkeys")
+  hotkey_window:addHotKeyCallback(HOTKEY, function()
+    log_info("hotkey " .. HOTKEY)
+    if campaign_window then set_shown(not shown) end
+  end)
+  hotkey_window:addHotKeyCallback(MAP_HOTKEY, function()
+    log_info("hotkey " .. MAP_HOTKEY)
+    local ok, err = pcall(toggle_map)
+    if not ok then log_error("map hotkey: " .. tostring(err)) end
+  end)
+  hotkey_window:setVisible(true)
+  log_info("hotkeys ready: " .. HOTKEY .. " (window), " .. MAP_HOTKEY .. " (map)")
 end
 
 local function show_window(spec, visible)
   local DialogLoader = require("DialogLoader")
-  local keep = campaign_window and shown and { campaign_window:getBounds() } or nil
+  local keep = campaign_window and { campaign_window:getBounds() } or nil
   if campaign_window then pcall(function() campaign_window:kill() end) end
   local t = window_table(spec)
   if keep then t.params.bounds.x, t.params.bounds.y = keep[1], keep[2] end  -- stay where it was dragged
   campaign_window = DialogLoader.spawnWidget("dialog", t, {}, "campaign_window")
-  shown_bounds = { x = t.params.bounds.x, y = t.params.bounds.y, w = t.params.bounds.w, h = t.params.bounds.h }
   for i, b in ipairs(spec.buttons or {}) do
     campaign_window["btnItem" .. i]:addChangeCallback(function()
       log_info("window: clicked " .. tostring(b.key))
@@ -189,15 +205,7 @@ local function show_window(spec, visible)
   end
   campaign_window.btnClose:addChangeCallback(function() set_shown(false) end)
   campaign_window.onClose = function() set_shown(false) end   -- the title bar's X
-  campaign_window:addHotKeyCallback(HOTKEY, function()
-    set_shown(not shown)
-    log_info("window: hotkey, shown=" .. tostring(shown))
-  end)
-  -- The map window's hotkey lives here too: this window always exists (see set_shown).
-  campaign_window:addHotKeyCallback(MAP_HOTKEY, function() toggle_map() end)
-  campaign_window:setVisible(true)
-  shown = true
-  if not visible then set_shown(false) end
+  set_shown(visible)
   last_spec = spec
 end
 
@@ -322,7 +330,21 @@ end
 -- spec = {
 --   title, center = { x, y }, scale (metres across, roughly), mode = "map"|"altitude"|"satellite",
 --   keep_view = true      redraw without moving the camera (a refresh)
+--   show = false          don't open the window: keep the map for the hotkey, or redraw it in
+--                         place if it's open (the server's periodic refresh, and the map sent on
+--                         joining); default true
 --   panel = { "line", ... }   the side panel's text
+--   detail_scale = metres  the view's width (east-west, measured on the map) at which objects with
+--                         detail = true are drawn too (version 8: measured, not getScale: Run 27)
+--   (version 6) any object can be in layers: detail = true (drawn zoomed in), groups = { "f:1", ... }
+--   (drawn while one of those is selected), or both (either); without either it's always drawn.
+--   select = "f:1" on an icon or line: clicking it selects that group (clicking nothing clears it).
+--   flights = { { label, select, info, fit = { x0, y0, x1, y1 } }, ... }   (version 7) the panel's
+--                         flight buttons: one selects its group, moves the view to the box's middle
+--                         and zooms out if the box doesn't fit (never in: Run 27)
+--                         (version 9) name, tail, takeoff_in = seconds: the label is
+--                         "<name>  T-h:mm:ss  <tail>", counted down here on DCS model time
+--   flights_none = "..."  what the flights block says when there are none (one line)
 --   objects = {           all positions in mission metres (x north, y east), colours {r, g, b, a} 0..1
 --     { kind = "icon", x, y, sym = SYMBOLS key, color, heading (deg), label, info }
 --     { kind = "text", x, y, text, color, fill, size, info }                   (drawing layer)
@@ -335,12 +357,18 @@ end
 -- Every step reports to the server (campaignWebEvent "map"), so a probe sees how far it got.
 
 local NM = 1852
-local MAP_PANEL_W = 300
+local MAP_PANEL_W = 340
+local MAP_FLIGHTS = 6      -- flight buttons in the panel
 local SYMBOLS = {
   tank = "P0091000001", ifv = "P0091000002", sam_long = "P0091000013", sam_medium = "P0091000012",
   sam_short = "P0091000011", aaa = "P0091000014", fighter = "P0091000024", helo = "P0091000021",
   awacs = "P0091000056", tanker = "P0091000064", airbase = "AirdromeClass1", plane = "IAG_PLANE",
   target = "IAG_TARGET",
+  -- version 4: the campaign server's war map
+  apc = "P0091000004", truck = "P0091000005", artillery = "P0091000006", mlrs = "P0091000007",
+  recon = "P0091000003", hq = "P0091000071", depot = "P0091000072", building = "P0091000076",
+  radar = "P0091000036", farp = "P0091000022", attack = "P0091000025", bomber = "P0091000027",
+  transport = "P0091000029", uav = "P0091000023",
 }
 local DRAW_DIR = "./MissionEditor/data/NewMap/images/draw/"
 local LINE_STYLES = {   -- the editor's line styles: texture, and its height (the line's thickness)
@@ -351,8 +379,17 @@ local LINE_STYLES = {   -- the editor's line styles: texture, and its height (th
 }
 
 local map_window, map_view, map_spec = nil, nil, nil
+local map_stale = false    -- map_spec arrived while the window was hidden: draw it when shown
 local map_info = {}        -- "u<id>" / "d<id>" -> what a click on that object shows
 local map_icons = {}       -- { x, y, info } of each icon, for clicks (our own hit test)
+local map_lines = {}       -- { points, info } of each line with info: routes, the front (Run 27:
+                           -- findDrawObjects doesn't find polylines)
+local map_size = nil       -- the screen size the window was built for
+local map_selected = nil   -- the selected group (a flight: its route's air defence is drawn)
+local map_zoomed = false   -- zoomed in past spec.detail_scale: detail objects are drawn
+local map_vw, map_vh = 1, 1  -- the map view's size, pixels
+local map_flights_t = nil  -- DCS model time when map_spec's flights' takeoff_in were counted from
+local map_tick = 0         -- os.clock() of the last countdown update
 local map_next_id = 2000000
 
 local function map_event(stage, detail)
@@ -398,6 +435,15 @@ local function draw_shape(objectType, pts, o, closed)
   if o.info then map_info["d" .. tostring(id)] = o.info end
 end
 
+local function visible(o)
+  if o.detail == nil and o.groups == nil then return true end
+  if o.detail and map_zoomed then return true end
+  if map_selected and type(o.groups) == "table" then
+    for _, g in ipairs(o.groups) do if g == map_selected then return true end end
+  end
+  return false
+end
+
 local function draw_objects(objects)
   local user, counts, failed = {}, {}, {}
   local function add_user(obj, info)
@@ -405,35 +451,39 @@ local function draw_objects(objects)
     if info then map_info["u" .. tostring(obj.id)] = info end
   end
   for _, o in ipairs(objects or {}) do
-    local ok, err = pcall(function()
-      local k = o.kind
-      if k == "icon" then
-        local c = col(o.color)
-        add_user({ classKey = SYMBOLS[o.sym] or o.sym or SYMBOLS.target, id = nid(), x = o.x, y = o.y,
-                   angle = tonumber(o.heading) or 0, color = c }, o.info or o.label)
-        map_icons[#map_icons + 1] = { x = o.x, y = o.y, info = o.info or o.label }
-        if o.label then   -- Run 26: coloured labels were hard to read; white with a dark outline, as Instant Action
-          add_user({ classKey = "AirdromeCaption", id = nid(), x = o.x, y = o.y, title = tostring(o.label),
-                     color = { 1, 1, 1 }, blurColor = { 0, 0, 0 }, offsetX = 16, offsetY = 0 }, o.info or o.label)
+    if visible(o) then
+      local ok, err = pcall(function()
+        local k = o.kind
+        if k == "icon" then
+          local c = col(o.color)
+          add_user({ classKey = SYMBOLS[o.sym] or o.sym or SYMBOLS.target, id = nid(), x = o.x, y = o.y,
+                     angle = tonumber(o.heading) or 0, color = c }, o.info or o.label)
+          map_icons[#map_icons + 1] = { x = o.x, y = o.y, info = o.info or o.label, select = o.select }
+          if o.label then   -- Run 26: coloured labels were hard to read; white with a dark outline, as Instant Action
+            add_user({ classKey = "AirdromeCaption", id = nid(), x = o.x, y = o.y, title = tostring(o.label),
+                       color = { 1, 1, 1 }, blurColor = { 0, 0, 0 }, offsetX = 16, offsetY = 0 }, o.info or o.label)
+          end
+        elseif k == "line" then
+          local pts = pts_of(o.points)
+          draw_shape("Polyline", pts, o, false)
+          if o.info then map_lines[#map_lines + 1] = { points = pts, info = o.info, select = o.select } end
+        elseif k == "area" then
+          draw_shape("Polygon", pts_of(o.points), o, true)
+        elseif k == "ring" then
+          draw_shape("Polygon", circle(o.x, o.y, o.r, 48), o, true)
+        elseif k == "text" then
+          local id = map_view:createDrawObject({ objectType = "TextBox", x = o.x, y = o.y, angle = 0,
+            color = col(o.color), text = tostring(o.text or ""), font = "DejaVuLGCSansCondensed.ttf",
+            fontSize = tonumber(o.size) or 14, fillColor = col(o.fill, { 0, 0, 0, 0.5 }), borderThickness = 0 })
+          map_view:addDrawObject(id, true)
+          if o.info then map_info["d" .. tostring(id)] = o.info end
+        else
+          error("unknown kind " .. tostring(k))
         end
-      elseif k == "line" then
-        draw_shape("Polyline", pts_of(o.points), o, false)
-      elseif k == "area" then
-        draw_shape("Polygon", pts_of(o.points), o, true)
-      elseif k == "ring" then
-        draw_shape("Polygon", circle(o.x, o.y, o.r, 48), o, true)
-      elseif k == "text" then
-        local id = map_view:createDrawObject({ objectType = "TextBox", x = o.x, y = o.y, angle = 0,
-          color = col(o.color), text = tostring(o.text or ""), font = "DejaVuLGCSansCondensed.ttf",
-          fontSize = tonumber(o.size) or 14, fillColor = col(o.fill, { 0, 0, 0, 0.5 }), borderThickness = 0 })
-        map_view:addDrawObject(id, true)
-        if o.info then map_info["d" .. tostring(id)] = o.info end
-      else
-        error("unknown kind " .. tostring(k))
-      end
-    end)
-    counts[o.kind or "?"] = (counts[o.kind or "?"] or 0) + (ok and 1 or 0)
-    if not ok then failed[#failed + 1] = tostring(o.kind) .. ": " .. tostring(err) end
+      end)
+      counts[o.kind or "?"] = (counts[o.kind or "?"] or 0) + (ok and 1 or 0)
+      if not ok then failed[#failed + 1] = tostring(o.kind) .. ": " .. tostring(err) end
+    end
   end
   if #user > 0 then map_view:addUserObjects(user) end
   local parts = {}
@@ -443,9 +493,118 @@ local function draw_objects(objects)
 end
 
 local function clear_objects()
-  map_info, map_icons = {}, {}
+  map_info, map_icons, map_lines = {}, {}, {}
   pcall(function() map_view:clearUserObjects() end)
   pcall(function() map_view:clearDrawObjects() end)
+end
+
+-- Draw map_spec again for the current zoom and selection (a refresh, a click, crossing the zoom).
+local function redraw(why)
+  if not (map_view and map_spec) then return end
+  local t0 = os.clock()
+  clear_objects()
+  local drawn, failed = draw_objects(map_spec.objects)
+  if why then
+    map_event("map", string.format("%s: drawn in %.0f ms: %s%s", why, (os.clock() - t0) * 1000, drawn,
+                                    #failed > 0 and ("; FAILED " .. table.concat(failed, "; ")) or ""))
+  end
+  return drawn, failed
+end
+
+local function model_time()
+  local ok, t = pcall(function() return Sim.getModelTime() end)
+  return ok and tonumber(t) or nil
+end
+
+-- T-0:19:32, as BMS shows the time to take-off (T+ once it's past).
+local function t_minus(dt)
+  local s = math.floor(dt + 0.5)
+  local sign = "-"
+  if s < 0 then sign, s = "+", -s end
+  return string.format("T%s%d:%02d:%02d", sign, math.floor(s / 3600), math.floor(s / 60) % 60, s % 60)
+end
+
+local function flight_label(f, now)
+  if f.takeoff_in and f.name and map_flights_t and now then
+    return tostring(f.name) .. "  " .. t_minus(tonumber(f.takeoff_in) - (now - map_flights_t)) .. "  " .. tostring(f.tail or "")
+  end
+  return tostring(f.label or f.select)
+end
+
+-- The panel's flight buttons, from spec.flights.
+local function set_flights(spec)
+  local list = type(spec.flights) == "table" and spec.flights or {}
+  local now = model_time()
+  for i = 1, MAP_FLIGHTS do
+    local b, f = map_window["btnFlight" .. i], list[i]
+    if b then
+      b:setText(f and flight_label(f, now) or "")
+      b:setVisible(f ~= nil)
+    end
+  end
+  map_window.txtFlights:setText(#list > 0 and "YOUR FLIGHTS (click one for its plan)"
+                                or ("YOUR FLIGHTS: " .. tostring(spec.flights_none or "none")))
+end
+
+-- Once a second while the map is open: count the take-offs down.
+local function tick_flights()
+  if not (map_window and map_spec and map_window:getVisible()) then return end
+  if os.clock() - map_tick < 1 then return end
+  map_tick = os.clock()
+  local list = type(map_spec.flights) == "table" and map_spec.flights or {}
+  local now = model_time()
+  for i = 1, math.min(#list, MAP_FLIGHTS) do
+    local b = map_window["btnFlight" .. i]
+    if b then b:setText(flight_label(list[i], now)) end
+  end
+end
+
+-- What the view shows, in map metres: north-south (map x) and east-west (map y). Run 27: the
+-- view's scale isn't metres across, so it's measured.
+local function view_span(view)
+  local ax, ay = view:getMapPoint(0, 0)
+  local bx, by = view:getMapPoint(map_vw, map_vh)
+  return math.abs(ax - bx), math.abs(ay - by)
+end
+
+local function is_zoomed(view)
+  local limit = map_spec and tonumber(map_spec.detail_scale)
+  if not limit then return false end
+  local _, ew = view_span(view)
+  return ew <= limit
+end
+
+-- Bring the box { x0, y0, x1, y1 } into view: centre on it, zoom out only if it doesn't fit.
+local function bring_into_view(view, box)
+  local x0, y0, x1, y1 = tonumber(box[1]), tonumber(box[2]), tonumber(box[3]), tonumber(box[4])
+  if not (x0 and y0 and x1 and y1) then return end
+  view:setCamera((x0 + x1) / 2, (y0 + y1) / 2)
+  local ns, ew = view_span(view)
+  local need = math.max((x1 - x0) / math.max(ns, 1), (y1 - y0) / math.max(ew, 1)) / 0.85
+  if need > 1 then
+    view:setScale(math.min(4000000, view:getScale() * need))
+    view:setCamera((x0 + x1) / 2, (y0 + y1) / 2)
+  end
+end
+
+local function check_zoom(view)
+  local z = is_zoomed(view)
+  if z ~= map_zoomed then
+    map_zoomed = z
+    redraw(z and "zoomed in" or "zoomed out")
+  end
+end
+
+local function line_near(pts, x, y, r)
+  for i = 2, #pts do
+    local a, b = pts[i - 1], pts[i]
+    local dx, dy = b.x - a.x, b.y - a.y
+    local len2 = dx * dx + dy * dy
+    local t = len2 > 0 and math.max(0, math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2)) or 0
+    local px, py = a.x + t * dx, a.y + t * dy
+    if (px - x) ^ 2 + (py - y) ^ 2 <= r * r then return true end
+  end
+  return false
 end
 
 -- Mouse: drag (any button) pans, the wheel zooms about the cursor, a click shows what's there.
@@ -467,6 +626,7 @@ local function setup_mouse(view)
     local mx2, my2 = view:getMapPoint(x, y)
     local cx, cy = view:getCamera()
     view:setCamera(cx + mx - mx2, cy + my - my2)
+    check_zoom(view)
   end
   function state:onMouseUp(x, y, button)
     if dragged or not down then return end
@@ -474,10 +634,20 @@ local function setup_mouse(view)
     -- 14 px in metres. Screen right is map east (y), not map x: Run 26's radius came out as zero.
     local ex, ey = view:getMapPoint(x + 14, y)
     local radius = math.sqrt((ex - mx) ^ 2 + (ey - my) ^ 2)
-    local found, best = nil, radius
+    local found, best, select = nil, radius, nil
     for _, i in ipairs(map_icons) do
       local d = math.sqrt((i.x - mx) ^ 2 + (i.y - my) ^ 2)
-      if d <= best then found, best = i.info, d end
+      if d <= best then found, best, select = i.info, d, i.select end
+    end
+    if not found then   -- lines: every one under the cursor (routes overlap near their base)
+      local hits = {}
+      for _, l in ipairs(map_lines) do
+        if line_near(l.points, mx, my, radius * 0.7) and #hits < 3 then
+          hits[#hits + 1] = l.info
+          select = select or l.select    -- the first route's flight
+        end
+      end
+      if #hits > 0 then found = table.concat(hits, "\n\n") end
     end
     if not found then
       for _, id in ipairs(view:findUserObjects(mx, my, radius) or {}) do
@@ -492,23 +662,39 @@ local function setup_mouse(view)
     local text = found or string.format("Nothing here (%.0f, %.0f).", mx, my)
     map_window.txtInfo:setText(text)
     map_event("map_click", text)
+    -- A flight selects its group (its route's air defence); a click on nothing clears it.
+    local sel = select or (found and map_selected) or nil
+    if sel ~= map_selected then
+      map_selected = sel
+      redraw(sel and ("selected " .. sel) or "selection cleared")
+    end
   end
 end
 
+-- The whole screen: the map on the left, the panel on the right (Run 27: the text, then what was
+-- clicked, then the buttons, each a full-width row so their labels fit).
 local function map_window_table(W, H)
-  local x0, pad = W - MAP_PANEL_W + 10, 6
-  local bw = math.floor((MAP_PANEL_W - 20 - 2 * pad) / 3)
+  local x0, pad, pw = W - MAP_PANEL_W + 10, 6, MAP_PANEL_W - 20
+  local bw = math.floor((pw - 2 * pad) / 3)
+  local info_h = math.max(200, math.floor(H * 0.25))
+  local buttons_y = H - 3 * 34 - 8
+  local info_y = buttons_y - info_h - 8
+  local flights_y = info_y - 8 - 24 - MAP_FLIGHTS * 32
   local children = {
-    txtPanel = static(x0, HEADER + 8, MAP_PANEL_W - 20, H - HEADER - 300, "", 14, "0xd0d0d0ff"),
-    txtInfo = static(x0, H - 280, MAP_PANEL_W - 20, 170, "Click a symbol for details.", 14, "0xffe080ff"),
-    btnModeMap = button(x0, H - 100, bw, 28, "Map"),
-    btnModeAlt = button(x0 + bw + pad, H - 100, bw, 28, "Terrain"),
-    btnModeSat = button(x0 + 2 * (bw + pad), H - 100, bw, 28, "Satellite"),
-    btnCenter = button(x0, H - 66, bw * 2 + pad, 28, "Back to the front"),
-    btnCloseMap = button(x0, H - 34, bw * 2 + pad, 28, "Close (" .. MAP_HOTKEY .. ")"),
+    txtPanel = static(x0, HEADER + 8, pw, flights_y - HEADER - 16, "", 14, "0xd0d0d0ff"),
+    txtFlights = static(x0, flights_y, pw, 22, "YOUR FLIGHTS", 14, "0xd0d0d0ff"),
+    txtInfo = static(x0, info_y, pw, info_h, "Click a symbol or a route for details.", 14, "0xffe080ff"),
+    btnModeMap = button(x0, buttons_y, bw, 28, "Map"),
+    btnModeAlt = button(x0 + bw + pad, buttons_y, bw, 28, "Terrain"),
+    btnModeSat = button(x0 + 2 * (bw + pad), buttons_y, bw, 28, "Satellite"),
+    btnCenter = button(x0, buttons_y + 34, pw, 28, "Back to the front"),
+    btnCloseMap = button(x0, buttons_y + 68, pw, 28, "Close (" .. MAP_HOTKEY .. ")"),
   }
+  for i = 1, MAP_FLIGHTS do
+    children["btnFlight" .. i] = button(x0, flights_y + 24 + (i - 1) * 32, pw, 28, "")
+  end
   return { type = "Window",
-    params = { bounds = { x = 40, y = 40, w = W, h = H }, text = "Campaign", enabled = true, draggable = true,
+    params = { bounds = { x = 0, y = 0, w = W, h = H }, text = "Campaign", enabled = true, draggable = false,
                hasCursor = true, modal = false, offscreen = false, overlay = false, buddy = false,
                resizable = false, clipResizeCursor = false, lockFlow = false, layout = {}, zOrder = 100002 },
     skin = { params = { name = "windowSkin", headerHeight = HEADER },
@@ -528,6 +714,7 @@ local function frame(spec)
   local c = type(spec.center) == "table" and spec.center or {}
   if c.x and c.y then map_view:setCamera(tonumber(c.x), tonumber(c.y)) end
   map_view:setScale(tonumber(spec.scale) or 300000)
+  map_zoomed = is_zoomed(map_view)
 end
 
 close_map = function()
@@ -535,7 +722,8 @@ close_map = function()
     pcall(function() map_view:destroy() end)
     pcall(function() map_window:kill() end)
   end
-  map_window, map_view = nil, nil
+  map_window, map_view, map_size = nil, nil, nil
+  map_selected, map_zoomed = nil, false
 end
 
 local function build_map()
@@ -543,12 +731,14 @@ local function build_map()
   local GUIMapView = require("GUIMapView")
   local DialogLoader = require("DialogLoader")
   local sw, sh = Gui.GetWindowSize()
-  local W, H = math.min(sw - 80, 1800), math.min(sh - 80, 1100)
+  local W, H = sw, sh
+  map_size = { sw, sh }
   map_event("map", "step window " .. W .. "x" .. H .. " on " .. sw .. "x" .. sh)
   map_window = DialogLoader.spawnWidget("dialog", map_window_table(W, H), {}, "campaign_map")
   map_view = GUIMapView.new()
   map_window:insertWidget(map_view)
   map_view:setBounds(0, HEADER, W - MAP_PANEL_W, H - HEADER)
+  map_vw, map_vh = W - MAP_PANEL_W, H - HEADER
   map_view:setBkgColor({ 107 / 255, 175 / 255, 248 / 255 })
   local classifier, source = load_classifier()
   map_view:loadClassifier(classifier)
@@ -576,13 +766,47 @@ local function build_map()
   map_window.btnModeMap:addChangeCallback(mode("map"))
   map_window.btnModeAlt:addChangeCallback(mode("altitude"))
   map_window.btnModeSat:addChangeCallback(mode("satellite"))
-  map_window.btnCenter:addChangeCallback(function() if map_spec then frame(map_spec) end end)
+  map_window.btnCenter:addChangeCallback(function()
+    if map_spec then
+      local was = map_zoomed
+      frame(map_spec)
+      if map_zoomed ~= was then redraw("zoomed out") end
+    end
+  end)
+  for i = 1, MAP_FLIGHTS do
+    map_window["btnFlight" .. i]:addChangeCallback(function()
+      local f = map_spec and type(map_spec.flights) == "table" and map_spec.flights[i]
+      if not f then return end
+      map_window.txtInfo:setText(tostring(f.info or f.label or ""))
+      if type(f.fit) == "table" then bring_into_view(map_view, f.fit) end
+      map_zoomed = is_zoomed(map_view)
+      map_selected = f.select
+      map_event("map_click", tostring(f.label))
+      redraw("selected " .. tostring(f.select))
+    end)
+  end
   map_window.btnCloseMap:addChangeCallback(function() map_window:setVisible(false) end)
   map_window.onClose = function() map_window:setVisible(false) end
 end
 
+-- The screen size changed since the window was built (a resolution change): build it again.
+local function screen_changed()
+  if not map_size then return false end
+  local ok, sw, sh = pcall(function() return require("dxgui").GetWindowSize() end)
+  return ok and (sw ~= map_size[1] or sh ~= map_size[2])
+end
+
 local function open_map(spec)
   local t0 = os.clock()
+  if map_window and not map_window:getVisible() and screen_changed() then close_map() end
+  -- show = false and the window isn't on screen: just keep it (the hotkey draws it). A refresh
+  -- while it's hidden costs nothing then.
+  if spec.flights_t == nil then spec.flights_t = model_time() end   -- when its countdowns start
+  if spec.show == false and not (map_window and map_window:getVisible()) then
+    map_spec, map_stale = spec, true
+    map_event("map", "kept for the hotkey (" .. tostring(type(spec.objects) == "table" and #spec.objects or 0) .. " objects)")
+    return
+  end
   local fresh = map_window == nil
   if fresh then
     local ok, err = pcall(build_map)
@@ -595,22 +819,36 @@ local function open_map(spec)
   map_spec = spec
   pcall(function() map_window:setText(tostring(spec.title or "Campaign")) end)
   map_window.txtPanel:setText(table.concat(type(spec.panel) == "table" and spec.panel or {}, "\n"))
+  map_flights_t = spec.flights_t
+  set_flights(spec)
   local ok_mode, err_mode = pcall(function() map_view:setMapMode(spec.mode or "map") end)
   if not ok_mode then map_event("map", "mode failed: " .. tostring(err_mode)) end
   if fresh or not spec.keep_view then frame(spec) end
-  clear_objects()
-  local drawn, failed = draw_objects(spec.objects)
+  local drawn, failed = redraw()
+  map_stale = false
   map_window:setVisible(true)
   map_event("map", string.format("%s in %.0f ms: %s%s", fresh and "shown" or "redrawn", (os.clock() - t0) * 1000,
                                   drawn, #failed > 0 and ("; FAILED " .. table.concat(failed, "; ")) or ""))
 end
 
 toggle_map = function()
-  if not map_window then
-    if map_spec then open_map(map_spec) else log_info("map: nothing from the server yet") end
-    return
+  if map_window and not map_window:getVisible() and screen_changed() then
+    close_map()
   end
-  map_window:setVisible(not map_window:getVisible())
+  if map_window and map_window:getVisible() then
+    map_window:setVisible(false)
+  elseif map_spec and (map_stale or not map_window) then
+    -- Draw what came while it was hidden; keep the view the player left, if the window exists.
+    local spec = {}
+    for k, v in pairs(map_spec) do spec[k] = v end
+    spec.show, spec.keep_view = true, map_window ~= nil
+    local ok, err = pcall(open_map, spec)
+    if not ok then map_event("map", "failed: " .. tostring(err)) end
+  elseif map_window then
+    map_window:setVisible(true)
+  else
+    log_info("map: nothing from the server yet")
+  end
 end
 
 function RPC.method.campaignMap(sender_id, spec)
@@ -632,17 +870,21 @@ function callbacks.onMissionLoadEnd()
   pending_join = false
   if Sim.isMultiplayer() then   -- a client, or the host of a server hosted from DCS
     to_server("campaignClientHello", VERSION)
-    -- A hidden window from the start, so the hotkey works before the server sends anything.
-    local ok, err = pcall(show_window, last_spec or { title = "Campaign", lines = { "Nothing from the server yet." } }, false)
-    if not ok then log_error("window: " .. tostring(err)) end
+    local ok, err = pcall(make_hotkey_window)
+    if not ok then log_error("hotkeys: " .. tostring(err)) end
   end
+end
+
+function callbacks.onSimulationFrame()
+  pcall(tick_flights)
 end
 
 function callbacks.onSimulationStop()
   close_web()
   close_map()
   if campaign_window then pcall(function() campaign_window:kill() end) end
-  campaign_window = nil
+  if hotkey_window then pcall(function() hotkey_window:kill() end) end
+  campaign_window, hotkey_window = nil, nil
 end
 
 Sim.setUserCallbacks(callbacks)

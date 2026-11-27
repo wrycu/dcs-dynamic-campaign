@@ -84,6 +84,48 @@ bearing and range from the player to each. Use `build/campaign-smoke.miz`;
 `python3 -m campaign.scenarios.khalkhalah DTC_DIR` writes a test cartridge. Steps: Run 15 in
 [testing in DCS](testing-in-dcs.md).
 
+## The war map
+
+Players with the opt-in client script (`lua/client/campaign_client.lua`, version 9) get the war
+in a full-screen native DCS window with the Mission Editor's map (proof P21), built by `campaign/warmap.py`
+for scenarios with a map layer (`southern_syria`). On loading in, a player's script says hello
+and the server sends the map hidden: **Ctrl+Shift+F8** shows or hides it; `-map` in chat sends it
+and opens it. It's refreshed every `map_refresh_s` for everyone who has it: in place if it's
+open (the view stays where the player left it), and kept for the hotkey if it isn't. The `MAP`
+lines in the log say what was sent (objects, size, build time) and how each client got on.
+
+What blue sees ("plausible intel": what a real side would know, not all the engine knows):
+- **Ground:** each side's shaded, the front line where they meet. A point belongs to the side
+  holding the nearest objective. Neutral objectives (Lebanon) don't count, so they're shaded as
+  whoever is nearest. An enclave is drawn over its surroundings, as a ring.
+- **Own forces:** every formation (click: order, strength, morale, supply, battle), airbase
+  (squadrons, aircraft ready and damaged), depot, factory and power plant (damage), and battle.
+- **Air defence,** in three layers, each site with its ring (the ring takes no clicks):
+  - **always:** long range SAMs only (SA-2, SA-5, SA-10, SA-20, Patriot), both sides';
+  - **zoomed in** to 40 nm across or closer (the view's width, measured on the map): every site blue knows of: all its own (Hawks,
+    Avengers), the enemy's SAMs reaching 15 km or more (they radiate), and the enemy's short
+    range air defence within 8 nm of blue ground or forces, or in a battle;
+  - **a flight selected** (its symbol, route or panel button): every enemy site, of any size, that reaches
+    within 3 nm of its route or target (its threat brief), also listed in the flight's details.
+    A click on empty map clears the selection.
+  Click a site: ours give launchers and vehicles; the enemy's a rough count ("3 or 4
+  launchers"), whether it's reported damaged, and its radar.
+- **Flights:** own flights in the air (players' flights in yellow). No routes by default. Select
+  a flight (the panel's **Your flights** buttons, the first 6 player flights in the next 3 hours,
+  each with its time to take-off as BMS shows it, `T-0:19:32`, counted down live on mission time;
+  or a flight's symbol in the air) to see its plan: its route in white with each waypoint's time
+  and time from take-off (`WP1 00:42 +0:12`, `TGT`, `STN` for a station, `LAND`), its target, the
+  other flights of its package as yellow dashed routes with their time on target, and every enemy
+  air defence site along the way. The view moves to the plan, zooming out only if it doesn't fit.
+  Times are planned: take-off, then each leg at the flight's cruise speed (the package's slowest)
+  unless the waypoint has its own time, plus any time on station.
+- **The enemy:** airbases with the aircraft types reported there; depots, factories and power
+  as targets, with their damage; formations only within 8 nm of blue ground or forces, with a
+  rough strength ("about 25 vehicles") and no names; flights only while airborne within 80 nm
+  of a blue airbase or 150 nm of a blue AWACS, with their kind (fighters, attack) but not type.
+- **Panel:** day and time, objectives held, battles, known threats by type, the latest war news,
+  and the player flights' buttons.
+
 ## Settings
 
 `config/campaign.toml`, `[server]`:
@@ -95,6 +137,7 @@ bearing and range from the player to each. Use `build/campaign-smoke.miz`;
 | `autosave_s` | `30` | Real seconds between saves. |
 | `status_s` | `60` | Real seconds between console status lines. |
 | `slot_sides` | `[0, 2]` | Sides players may take: 0 spectators, 1 red, 2 blue. |
+| `map_refresh_s` | `30` | Real seconds between war map refreshes (at least 5). |
 
 `[bubble]` is in [bubble](bubble.md). Unknown keys and sections are an error.
 
