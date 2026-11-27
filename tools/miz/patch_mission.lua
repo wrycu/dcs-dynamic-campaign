@@ -8,7 +8,7 @@ params.lua returns a table:
   mission_in, mission_out, warehouses_in, warehouses_out  file paths
   loader          Lua source run by a MISSION START "DO SCRIPT" trigger
   comment         trigger comment
-  airdrome_id     warehouse airport to make BLUE with limited aircraft (munitions unlimited)
+  airdrome_id     warehouse airport to make BLUE with limited aircraft (munitions unlimited), or nil
   player_x, player_y  where to move the player group (DCS map coords), or nil
   player_alt      altitude for the player group's units and waypoints (m), or nil
   clients         true: player aircraft become Client slots (for a multiplayer server)
@@ -23,10 +23,17 @@ params.lua returns a table:
                   waypoints = { { x =, y =, alt = }, ... },
                   units = { { name =, skill =, dtc = <cartridge name> or nil }, ... } }: groups cloned from
                   the first player group, parked at that airdrome (DCS picks the spots), engines
-                  running (hot) or not (cold). Their airdromes get unlimited aircraft, or DCS greys
-                  the slots out for want of stock. A unit
+                  running (hot) or not (cold). Their airdromes get unlimited aircraft and are made
+                  BLUE, or DCS greys the slots out. A unit
                   with skill "Client" is a player slot, any other skill is AI; ``dtc`` names a cartridge
                   in the .miz's DTC/ folder that loads itself when the unit spawns. Or nil.
+                  A campaign flight (campaign/session.py) also gives: the group's task, its whole route
+                  as ``points`` (the takeoff point first, as campaign/flight_spawn.py builds it; used
+                  instead of ``waypoints``), and per unit type, payload, callsign, onboard_num, x, y,
+                  heading and parking (its stand's Term_Index). A unit of another type than the
+                  template's loses the template's radio and type-specific settings.
+  drop_players    true: remove the template's own player groups (after cloning client_groups from
+                  them), so the mission has only the slots it was built with
   combined_arms   { slots =, units = { { name =, type =, x =, y =, heading = }, ... } }: that many
                   blue Tactical Commander and JTAC/Operator slots, and one-unit blue ground groups
                   players can control (playerCanDrive), or nil
@@ -216,6 +223,16 @@ end
 
 -- Client groups for planned flights (P20): seats are Client slots or AI, each Client unit with its
 -- own cartridge (unit.DTC, as the Mission Editor writes it; the .dtc file is in the .miz's DTC/).
+local TYPE_SPECIFIC = { "AddPropAircraft", "Radio", "datalinks", "payload", "livery_id", "dataCartridge" }
+local function point_defaults(p, first)
+  p.alt_type = p.alt_type or "BARO"
+  p.ETA = p.ETA or 0
+  if p.ETA_locked == nil then p.ETA_locked = first end
+  p.formation_template = p.formation_template or ""
+  if p.speed_locked == nil then p.speed_locked = true end
+  p.task = p.task or { id = "ComboTask", params = { tasks = {} } }
+  return p
+end
 for gi, cg in ipairs(params.client_groups or {}) do
   local src = players[1]
   local ctry
@@ -231,37 +248,71 @@ for gi, cg in ipairs(params.client_groups or {}) do
   g.units = {}
   for i, spec in ipairs(cg.units) do
     local u = deep_copy(proto)
+    if spec.type and spec.type ~= proto.type then
+      for _, k in ipairs(TYPE_SPECIFIC) do u[k] = nil end
+      u.type = spec.type
+    end
     u.unitId, u.name, u.skill = umax + i, spec.name, spec.skill
-    u.x, u.y, u.alt, u.speed, u.heading = cg.x, cg.y, 0, 0, 0
-    u.parking, u.parking_id = nil, nil
-    if type(u.callsign) == "table" then u.callsign[2], u.callsign[3], u.callsign.name = gi + 1, i, nil end
-    u.onboard_num = string.format("%03d", (gi + 1) * 10 + i)
+    u.x, u.y, u.alt, u.speed, u.heading = spec.x or cg.x, spec.y or cg.y, 0, 0, spec.heading or 0
+    u.parking, u.parking_id = spec.parking, nil
+    if spec.payload then u.payload = spec.payload end
+    if spec.callsign then
+      u.callsign = spec.callsign
+    elseif type(u.callsign) == "table" then
+      u.callsign[2], u.callsign[3], u.callsign.name = gi + 1, i, nil
+    end
+    u.onboard_num = spec.onboard_num or string.format("%03d", (gi + 1) * 10 + i)
     u.DTC = spec.dtc and { AutoLoad = true, Cartridges = { [1] = { name = spec.dtc, default = true } } } or nil
     g.units[i] = u
   end
   g.groupId, g.name = gmax + 1, cg.name
   g.x, g.y = cg.x, cg.y
+  g.task = cg.task or g.task
   g.uncontrolled, g.lateActivation = false, nil
   local hot = (cg.start or "hot") == "hot"
   assert(hot or cg.start == "cold", "client_groups: start must be hot or cold")
-  local points = { [1] = {
-    alt = 0, alt_type = "BARO",
-    action = hot and "From Parking Area Hot" or "From Parking Area",
-    type = hot and "TakeOffParkingHot" or "TakeOffParking",
-    airdromeId = cg.airdrome_id, x = cg.x, y = cg.y, speed = 0, ETA = 0, ETA_locked = true,
-    formation_template = "", speed_locked = true,
-    task = { id = "ComboTask", params = { tasks = {} } },
-  } }
-  for _, wp in ipairs(cg.waypoints or {}) do
-    points[#points + 1] = {
-      alt = wp.alt, alt_type = "BARO", action = "Turning Point", type = "Turning Point",
-      x = wp.x, y = wp.y, speed = 220, ETA = 0, ETA_locked = false, formation_template = "",
-      speed_locked = true, task = { id = "ComboTask", params = { tasks = {} } },
-    }
+  local points
+  if cg.points then
+    points = {}
+    for i, p in ipairs(cg.points) do points[i] = point_defaults(deep_copy(p), i == 1) end
+  else
+    points = { [1] = {
+      alt = 0, alt_type = "BARO",
+      action = hot and "From Parking Area Hot" or "From Parking Area",
+      type = hot and "TakeOffParkingHot" or "TakeOffParking",
+      airdromeId = cg.airdrome_id, x = cg.x, y = cg.y, speed = 0, ETA = 0, ETA_locked = true,
+      formation_template = "", speed_locked = true,
+      task = { id = "ComboTask", params = { tasks = {} } },
+    } }
+    for _, wp in ipairs(cg.waypoints or {}) do
+      points[#points + 1] = {
+        alt = wp.alt, alt_type = "BARO", action = "Turning Point", type = "Turning Point",
+        x = wp.x, y = wp.y, speed = 220, ETA = 0, ETA_locked = false, formation_template = "",
+        speed_locked = true, task = { id = "ComboTask", params = { tasks = {} } },
+      }
+    end
   end
   g.route = { points = points }
   local list = ctry.plane.group
   list[#list + 1] = g
+end
+
+-- The template's own player groups go (session missions: only the campaign's slots).
+if params.drop_players then
+  local drop = {}
+  for _, g in ipairs(players) do drop[g] = true end
+  for _, side in pairs(mission.coalition or {}) do
+    for _, ctry in pairs(side.country or {}) do
+      for _, cat in ipairs({ "plane", "helicopter" }) do
+        local grp = ctry[cat] and ctry[cat].group
+        if grp then
+          local keep = {}
+          for _, g in ipairs(grp) do if not drop[g] then keep[#keep + 1] = g end end
+          ctry[cat].group = keep
+        end
+      end
+    end
+  end
 end
 
 -- Combined Arms for blue (P19 part 4: a soldier the player walks, whose position the server knows):
@@ -322,11 +373,13 @@ write_table(params.mission_out, "mission", mission)
 -- ---------- warehouses ----------
 
 local warehouses = load_table(params.warehouses_in, "warehouses")
-local ap = warehouses.airports and warehouses.airports[params.airdrome_id]
-assert(ap, "warehouses has no airport " .. tostring(params.airdrome_id))
-ap.coalition = "BLUE"
-ap.unlimitedAircrafts = false
-ap.unlimitedMunitions = true  -- AI ramp starts take weapons from stock; we don't track munitions yet
+if params.airdrome_id then
+  local ap = warehouses.airports and warehouses.airports[params.airdrome_id]
+  assert(ap, "warehouses has no airport " .. tostring(params.airdrome_id))
+  ap.coalition = "BLUE"
+  ap.unlimitedAircrafts = false
+  ap.unlimitedMunitions = true  -- AI ramp starts take weapons from stock; we don't track munitions yet
+end
 for _, id in ipairs(params.dynamic or {}) do
   local dap = warehouses.airports[id]
   assert(dap, "warehouses has no airport " .. tostring(id))
@@ -343,10 +396,14 @@ for _, cg in ipairs(params.client_groups or {}) do
   local cap = warehouses.airports[cg.airdrome_id]
   assert(cap, "warehouses has no airport " .. tostring(cg.airdrome_id))
   cap.unlimitedAircrafts = true
+  cap.unlimitedMunitions = true
+  cap.coalition = "BLUE"
 end
 write_table(params.warehouses_out, "warehouses", warehouses)
 
-print(string.format("patched: %d player group(s), airport %d BLUE, limited aircraft%s%s", #players, params.airdrome_id,
+print(string.format("patched: %d player group(s)%s, %s%s%s", #players, params.drop_players and " (dropped)" or "",
+  params.airdrome_id and string.format("airport %d BLUE, limited aircraft", params.airdrome_id)
+    or string.format("%d client group(s)", #(params.client_groups or {})),
   (params.dynamic and #params.dynamic > 0) and (", dynamic slots at " .. table.concat(params.dynamic, ", ")) or "",
   (pc and string.format(", parked Client %q at airdrome %d", pc.name, pc.airdrome_id) or "")
   .. (ca and string.format(", Combined Arms: %d blue slots, %d drivable units", ca.slots, #ca.units) or "")))

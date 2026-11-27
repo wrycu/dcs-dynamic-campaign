@@ -8,7 +8,9 @@ What it does:
   * Reports players by stable UCID (connect, disconnect, slot changes). The mission
     environment only sees player names; the engine joins the two by name.
   * Gates slots in onPlayerTryChangeSlot from a rule table the engine pushes with the
-    `slot_rules` command. Default (PvE): spectators and blue only.
+    `slot_rules` command. Default (PvE): spectators and blue only. Per slot, a seat in a
+    committed campaign flight can be held for one player, or closed (not open yet, or gone to
+    the AI).
   * Loads another mission when the engine asks (`load_mission`), and reports each stage of a
     mission load (`mission_load`).
   * Chat commands: chat starting with "-" goes to the engine (`chat_command`) instead of the
@@ -254,7 +256,7 @@ end
 
 local H = {
   run_id = string.format("%.0f", socket.gettime() * 1000000),  -- per DCS process start
-  rules = { sides = set_of(cfg.allowed_sides), deny = {}, airdromes = {} },  -- ucid / airdrome id -> reason
+  rules = { sides = set_of(cfg.allowed_sides), deny = {}, airdromes = {}, slots = {} },  -- ucid / airdrome id -> reason
   ucids = {},                                                  -- player id -> ucid
 }
 CampaignHooks = H
@@ -282,12 +284,19 @@ local function reasons(t)
   return out
 end
 
--- data: { allowed_sides = { 0, 2 }, deny = { [ucid] = "reason" }, deny_airdromes = { [id] = "reason" } }
--- (replaces the whole table). deny_airdromes refuses slots DCS lists at that airdrome, which
--- includes dynamic slots if DCS asks this hook about them (proof P2 finds out).
+-- data: { allowed_sides = { 0, 2 }, deny = { [ucid] = "reason" }, deny_airdromes = { [id] = "reason" },
+-- slots = { [slot id] = { owner = ucid or nil, reason = "..." } } } (replaces the whole table).
+-- deny_airdromes refuses slots DCS lists at that airdrome, which includes dynamic slots if DCS
+-- asks this hook about them (proof P2 finds out). slots: a seat with an owner is refused to
+-- everyone else, with its reason; one without an owner but with a reason is refused to everyone
+-- (closed); a slot not listed is free.
 function commands.slot_rules(d)
+  local slots = {}
+  for k, v in pairs(type(d.slots) == "table" and d.slots or {}) do
+    if type(v) == "table" then slots[tostring(k)] = { owner = v.owner, reason = v.reason and tostring(v.reason) } end
+  end
   H.rules = { sides = set_of(d.allowed_sides or cfg.allowed_sides), deny = reasons(d.deny),
-              airdromes = reasons(d.deny_airdromes) }
+              airdromes = reasons(d.deny_airdromes), slots = slots }
 end
 
 -- Load another mission on this server. data: { file = "name.miz" (in Saved Games\Missions) or a
@@ -564,6 +573,9 @@ callbacks.onPlayerTryChangeSlot = safe("onPlayerTryChangeSlot", function(id, sid
     reason = H.rules.deny[ucid]
   elseif entry and entry.airdromeId and H.rules.airdromes[tonumber(entry.airdromeId)] then
     reason = H.rules.airdromes[tonumber(entry.airdromeId)]
+  else
+    local rule = slot and H.rules.slots[tostring(slot)]
+    if rule and (rule.owner == nil or rule.owner ~= ucid) then reason = rule.reason end
   end
   if not reason then return nil end
   net.send_chat_to(reason, id)

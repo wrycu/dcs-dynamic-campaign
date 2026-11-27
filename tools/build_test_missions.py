@@ -113,9 +113,12 @@ trigger.action.outText("LOADER FAILED: could not load " .. rel .. " (see dcs.log
 
 def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, comment: str,
           repo_path: str | None = None, clients: bool = False, dynamic: list[int] | None = None,
-          extra: dict[str, Any] | None = None, files: dict[str, bytes] | None = None) -> Path:
+          extra: dict[str, Any] | None = None, files: dict[str, bytes] | None = None,
+          airdrome_id: int | None = AIRDROME_ID, move_player: bool = True) -> Path:
     """``extra``: more patcher params, e.g. ``date``, ``start_time``, ``weather`` (see patch_mission.lua).
-    ``files``: more files to put in the .miz, by path inside it (e.g. kneeboard pages)."""
+    ``files``: more files to put in the .miz, by path inside it (e.g. kneeboard pages).
+    ``airdrome_id``: the test airbase made BLUE (None: leave the warehouses as the template has them);
+    ``move_player``: move the template's player group 8 km south of the test airbase."""
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
         with zipfile.ZipFile(template) as z:
@@ -130,10 +133,11 @@ def build(template: Path, out: Path, name: str, rel_script: str, preamble: str, 
             f"warehouses_out = {lua_str(str(tmpd / 'warehouses'))}",
             f"loader = {lua_str(loader(rel_script, preamble, repo_path))}",
             f"comment = {lua_str(comment)}",
-            f"airdrome_id = {AIRDROME_ID}",
+        ] + ([f"airdrome_id = {airdrome_id}"] if airdrome_id is not None else []) + ([
             f"player_x = {AIRBASE_XY[0] - 8000}",  # 8 km south of the airbase
             f"player_y = {AIRBASE_XY[1]}",
             "player_alt = 3000",
+        ] if move_player else []) + [
             f"clients = {'true' if clients else 'false'}",
             f"dynamic = {{ {', '.join(str(i) for i in dynamic or [])} }}",
         ] + [f"{k} = {lua_value(v)}" for k, v in (extra or {}).items()]) + "\n}\n")

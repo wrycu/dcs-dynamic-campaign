@@ -1088,7 +1088,186 @@ Host from your DCS (MULTIPLAYER > New server), about 20 minutes. The campaign se
 8. `-map` in chat: it should open (centred again).
 9. Ctrl-C the server.
 
-**First try (version 4):** the map drew (2 territory areas, 121 icons, 19 rings; 26 kB, built in 2 ms cached, redrawn in about 12 ms) and clicks worked, but: Ctrl+Shift+F8 never fired (dcs.log has no press; both opens were `-map`), so the hotkeys sat on a campaign window shrunk to 0x0 that didn't get them; routes couldn't be clicked (findDrawObjects doesn't find polylines, and no flight was airborne to have a symbol); a click inside a threat ring showed the ring, not what was there; short range air defence cluttered; the window was 1800x1100 on a 3440x1440 screen and the Close button's label was cut off. Versions 5 to 14: the hotkeys on a 1x1 window of their own; routes and the front hit-tested by the script; rings without info; long range SAMs only by default (the rest zoomed in, and a selected flight's route threats), with a rough strength; the panel's flights as buttons that show a flight's plan, target and route threats; then (version 8, after a screenshot) a button no longer zooms in (the view's scale isn't metres across, so 30 nm zoomed in far too far: the zoom threshold and the fit are now measured on the map), no routes by default, the selected route white with waypoint times, its package in yellow; then (version 9) the flight buttons count down to take-off (`T-0:19:32`), and "none" fits on one line (the first map, sent before the planner ran, had no flights and the two-line text was clipped); then (version 10) real callsigns, and the list marks the selected flight and its package. A screenshot of STRIKE 9's plan went straight through the Damascus air defence: backlog item 45; then (version 11) the map opens by itself on taking a blue slot, the panel has the time of day and weather instead of the threat summary, a scale bar, and "Upcoming flights"; then (version 12) it didn't open by itself (the host choosing blue got only a coalition change, no slot change: now both are watched, with the pause), the hint texts went, and a flight's target marker is its own target (Colt 4, the SEAD of a CAS package, had the CAS's target, 21 km from its SA-6); then (version 13) the scale bar moved from the panel onto the map (it works); then (version 14) a join button that gives the player a seat in the selected flight (nothing more yet; confirmed working in DCS); both sides' depots; the window fills the screen (rebuilt if the resolution changes), with full-width buttons.
+**First try (version 4):** the map drew (2 territory areas, 121 icons, 19 rings; 26 kB, built in 2 ms cached, redrawn in about 12 ms) and clicks worked, but: Ctrl+Shift+F8 never fired (dcs.log has no press; both opens were `-map`), so the hotkeys sat on a campaign window shrunk to 0x0 that didn't get them; routes couldn't be clicked (findDrawObjects doesn't find polylines, and no flight was airborne to have a symbol); a click inside a threat ring showed the ring, not what was there; short range air defence cluttered; the window was 1800x1100 on a 3440x1440 screen and the Close button's label was cut off. Versions 5 to 14: the hotkeys on a 1x1 window of their own; routes and the front hit-tested by the script; rings without info; long range SAMs only by default (the rest zoomed in, and a selected flight's route threats), with a rough strength; the panel's flights as buttons that show a flight's plan, target and route threats; then (version 8, after a screenshot) a button no longer zooms in (the view's scale isn't metres across, so 30 nm zoomed in far too far: the zoom threshold and the fit are now measured on the map), no routes by default, the selected route white with waypoint times, its package in yellow; then (version 9) the flight buttons count down to take-off (`T-0:19:32`), and "none" fits on one line (the first map, sent before the planner ran, had no flights and the two-line text was clipped); then (version 10) real callsigns, and the list marks the selected flight and its package. A screenshot of STRIKE 9's plan went straight through the Damascus air defence: backlog item 45; then (version 11) the map opens by itself on taking a blue slot, the panel has the time of day and weather instead of the threat summary, a scale bar, and "Upcoming flights"; then (version 12) it didn't open by itself (the host choosing blue got only a coalition change, no slot change: now both are watched, with the pause), the hint texts went, and a flight's target marker is its own target (Colt 4, the SEAD of a CAS package, had the CAS's target, 21 km from its SA-6); then (version 13) the scale bar moved from the panel onto the map (it works); then (version 14) a join button that gives the player a seat in the selected flight (nothing more yet). Confirmed in DCS with version 14: the join button, the map opening by itself on going blue, the time of day and weather in the panel, and callsigns on the DCS units; both sides' depots; the window fills the screen (rebuilt if the resolution changes), with full-width buttons.
 
 ### What to send back
 The server log's `MAP` lines (`build/logs/server.log`), the `CAMPAIGN-CLIENT` lines from `dcs.log` (each hotkey press is logged as `hotkey Ctrl+Shift+F8`), a screenshot of the map at the start and one after a few minutes at ×4, and anything that looked wrong, cluttered or too much (or too little) for blue to know.
+
+## Run 28: into the jet: Commit and Fly (`campaign.server --scenario southern_syria`), backlog item 2
+Host from your DCS (MULTIPLAYER > New server), FA-18C, about 40 minutes. Client script version 15 and new Hooks. Join a flight on the war map, press **Commit** as its lead: the server builds the session mission with your flight's jets (your seat a Client slot, the other an AI wingman in your group) and reloads it. Then **Fly** (from 20 min before take-off) puts you in your own jet on the ramp, hot, with the planned loadout and your cartridge. See "Into the jet" in [server](server.md). DCS doesn't allow time acceleration in multiplayer, so pick a flight due off soon.
+
+1. Install the new client script and Hooks, then restart DCS (the mission bridge loads from the repo):
+   ```bash
+   cp lua/client/campaign_client.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+   cp lua/hooks/campaign_hooks.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+   ```
+2. `python3 -m campaign.server --scenario southern_syria` (the Run 27 campaign carries on; `--new` is fine too). Host `campaign-dev/campaign-p20.miz` as in Run 27. The log should show `MAP player 1 has the client script (version 15)`.
+3. **Join and Commit.** Choose blue spectators: the map opens. Under **Upcoming flights**, pick a Hornet flight due off in 20 to 30 minutes (its button says `T-0:2x:xx`) and press **Join**: you're `<callsign>-1`, and the button under it says `Commit <callsign> (restarts the mission)`. Press it. Expect:
+   - chat `> Committing Uzi 4: 1 player, 1 AI ...`, then a DCS message to everyone, `Campaign: Uzi 4 BAI is committed. The mission restarts in 15 s ...`;
+   - the log: `SESSION built .../campaign-dev/campaign-session-a.miz: Uzi 4 BAI`, `SESSION bai_... committed by player 1; loading campaign-dev\campaign-session-a.miz in 15 s`;
+   - the reload: back at the slot screen. If the server starts paused, unpause (Run 11). The log: `HELLO mission ... new_run=True`, then `SESSION Uzi 4 has its jets: Uzi 4-1 slot N`.
+4. **The slot list.** Before choosing anything, look at blue's slots: is there a group named for your flight (`Uzi 4 BAI`) at its base, with one seat, `Uzi 4-1`, and no other aircraft slots? Try to take `Uzi 4-1` there: it should be refused with `Uzi 4-1 opens at HH:MM, 20 min before take-off` (if take-off is already less than 20 min away, it lets you in: that's step 5 without the button, so go back to spectators).
+5. **Fly.** Choose blue spectators; the map opens. Select your flight: the second button says `Fly Uzi 4-1 from HH:MM`, greyed out, until 20 min before take-off, then `Fly Uzi 4-1`. Press it. Expect the map to close and you in the cockpit (log: `SESSION player 1 (...) into Uzi 4-1`, `EVENT birth Uzi 4-1 ... player <you>`, `SESSION Uzi 4 is in DCS`). Check:
+   - hot, engines running, on an open stand the Hornet fits (not a shelter), at the flight's base;
+   - the loadout the plan gave it, full internal fuel, callsign Uzi 4-1 (and your board number);
+   - your AI wingman, Uzi 4-2, beside you, answering F1 wingman commands;
+   - the DTC window (RShift+RCtrl+K): cartridge `uzi_4_1` loaded, and on the HSI the flight's waypoints (the map's route for it), not just the mission route.
+6. **Fly it.** Take off (`takeoff` event; the map shows your flight in the air in yellow). Either fly the mission, or fly a few minutes and land back at the base. Landed and shut down: `recovered: 2 aircraft back to the squadron`, and you stay in your jet. Then leave to spectators.
+7. Exit, Ctrl-C the server.
+
+### What to send back
+Pass or what happened for each step, a screenshot of the slot list (step 4) and of the cockpit with the HSI (step 5), and anything odd: wrong stand, wrong loadout, no wingman, no cartridge, the reload stuck or needing anything besides choosing a slot. I'll read `build/logs/server.log` (the `SESSION` lines) and `dcs.log`.
+
+### Results (2026-11-27)
+Everything passed: Join, Commit (the session mission built and loaded, its group in the slot list, the seat refused before it opened), Fly into Uzi 4-1 hot with the planned loadout, cartridge and AI wingman, and flying it. One change asked: the war map opened by itself at the start of the real mission, over the cockpit (the slot change into the jet looked like taking a blue slot). Version 16: it opens by itself only for a blue spectator, never in a jet. Install it again:
+```bash
+cp lua/client/campaign_client.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+```
+
+## Run 29: ride to the jet (`tools.ride_probe`), proof P22
+Host from your DCS (MULTIPLAYER > New server), about 20 minutes. Client script version 17. Instead of going straight into the cockpit, you ride from a "briefing room" spot at Khalkhalah to your jet in an AI Humvee: the server drives it, and your client script keeps your camera in its passenger seat each frame (`Export.LoSetCameraPosition`), then puts you in the jet. The questions: does DCS let the script move a spectator's camera, does the camera stay put or fight DCS's own, does it look right, and does the Humvee get there?
+
+The script finds the Humvee in DCS's own world objects when your PC may read them (always for the host; a client needs the server's `allow_object_export`), and otherwise follows the positions the server sends 4 times a second, smoothed. Hosting tests the first way; a second player joining would test the second.
+
+1. Install the new client script, then restart DCS (the mission bridge loads from the repo; the Hooks haven't changed since Run 28):
+   ```bash
+   cp lua/client/campaign_client.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+   ```
+2. `python3 -m tools.ride_probe 2>&1 | tee run29.log`. Host `campaign-dev/campaign-p20.miz` (any Syria mission with the bridge). The probe picks an open spot at Khalkhalah a Hornet fits, builds `campaign-dev/campaign-p22.miz` with one Client Hornet there (`P22 Ride`, hot), and loads it after 10 s (`BUILD` lines). If the server starts paused, unpause. Expect `MISSION P22 Ride parked at ...` and `CLIENT player id 1 has the client script (version 17)`.
+3. **The ride, seat view.** Pick blue and stay in spectators (the war map doesn't open in this probe: no campaign server). Type `-ride`. Expect a Humvee to drive from another parking spot, 300 to 600 m off (1,000 to 2,000 ft), to just short of the jet at 20 km/h, about a minute, with your view in its passenger seat. Then the view cuts to the cockpit of `P22 Ride-1`.
+   - Did your view move at all? If not, try pressing F2, F11 or F10 (map off) once the ride's started, and say which one made it work.
+   - Is it smooth, or does it jitter or fight back when you move the mouse or press view keys? Is the height right (eye at the windscreen, not in the roof or the floor)? `-eye 0.3 0.45 1.75` moves it (forward, right, up, metres); try a few and say which looks best.
+   - Did the Humvee drive straight there, or get stuck, swerve or hit anything?
+4. **Chase view.** Back to spectators (blue), `-ride chase`: the camera 12 m behind and 5 m above the Humvee, looking ahead of it. Same questions. `-ride 40` drives faster.
+5. If a ride misbehaves: `-stop` ends it, `-in` puts you straight in the jet, `-rebuild` builds the mission again with other spots.
+6. Optional, a second player with client script 17: their ride follows the server's positions (`RIDE ... following from server`) unless the server allows object export. Is it as smooth as yours?
+7. Ctrl-C the probe.
+
+### What to send back
+`run29.log`: the `RIDE` lines (where the script got the Humvee from, and `held N, moved by DCS M`: frames the camera stayed where the script put it, and frames something else moved it), `DRIVE`, `STUCK` and `ARRIVE` lines. And what you saw: did the view move, which keys you needed, the seat height, smoothness, and how the hand-off into the cockpit looked. A short video helps most. If nothing happened, the `CAMPAIGN-CLIENT` lines from `dcs.log`.
+
+### Results (2026-11-27, first try, client version 17)
+Hosted from your DCS. The probe built and loaded `campaign-p22.miz`, the Humvee spawned and drove towards the jet, and the client script found it in DCS's world objects (object export is allowed for the host).
+- **The view following a spectated aircraft keeps the camera.** In it, `LoSetCameraPosition` did nothing: about 5,000 frames, none held, and the camera read back where DCS had it (on the aircraft, 370 km off).
+- **F4 lets the script place the camera.** After F4 it held (about 600 frames), and the view rode in the Humvee.
+- **F5 mid-ride crashed DCS** (`ACCESS_VIOLATION`, with Lua on the stack): taken to be the script's camera calls in that view.
+- `-ride stop` and `-ride -stop` started new rides (the command was `-stop`); they stop the ride now.
+
+**Changed for the second try (client version 18):** while waiting, the script places the camera only once a second until it holds, then every frame; the moment DCS moves it (the view changed) it lets go and makes no more camera calls that ride (`-ride` to retry). The probe tells you to press F4 or F11 when the ride starts, and says in chat when you're in the Humvee and when the ride lets go.
+
+### Second try (client version 18)
+1. Install the client script and restart DCS:
+   ```bash
+   cp lua/client/campaign_client.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+   ```
+2. `python3 -m tools.ride_probe 2>&1 | tee run29b.log`, host `campaign-dev/campaign-p22.miz` directly (it's built; `campaign-p20.miz` works too and rebuilds it). Expect `MISSION P22 Ride parked at ...` and `CLIENT ... (version 18)`.
+3. Blue spectators, `-ride`. When chat says *Press F4*, press **F4**. Expect chat *You're in the Humvee* and your view in its passenger seat until it reaches the jet, then the cockpit. **Don't press F5.**
+   - Smooth, or jittery? Does the mouse or a view key fight it?
+   - Seat height: try `-eye 0.3 0.45 1.75` (forward, right, up, metres) and a few others.
+   - The hand-off into the cockpit: clean, or a jump through something odd?
+4. Back to blue spectators, `-ride`, and press **F11** this time. Same questions.
+5. Once more with **F4**, then mid-ride press F2: expect chat *the ride let go* and your view left alone (no crash). `-stop` and `-in` if needed.
+6. `-ride chase` with F4 or F11: the camera behind and above the Humvee.
+7. Ctrl-C the probe.
+
+Send back `run29b.log` (the `RIDE` lines say `waiting`, `holding` or `let go`, with frames held) and what you saw at each step; a short video helps most.
+
+### Results (2026-11-27, second try, client version 18)
+- **The ride works.** With F4 the camera held from the third try (2 s) to the jet: 20,659 frames held, 2 moved by DCS. The Humvee drove there in 98 s, the probe moved you into `P22 Ride-1` and the client script put you in the cockpit (video).
+- **You couldn't look around:** the script set the view direction every frame, over the mouse.
+- **The seat was too high:** the cab roof filled most of the view (eye 1.75 m above the ground).
+- **`-ride` from inside the jet** (you were still in `P22 Ride-1`) drove the Humvee into your own jet: it stuck 5 m short, and `-in` failed (DCS doesn't move a player into the slot they're in, as in Run 14). The chase view looked wrong until you picked the Humvee yourself, since F4 from the jet looks at the jet.
+- "You're in the Humvee" was repeated every 2 s (the probe matched the progress lines too).
+
+**Changed for the third try (client version 19):** you can look around. While the camera holds, the script keeps the view direction DCS has (with your mouse or head tracking in it), turned with the Humvee, and sets only the position (`-ride fixed` for the old behaviour). The seat is lower (0.2 m forward, 0.45 m right, 1.4 m up). `-ride` refuses while you're in a jet, and the chat messages come once.
+
+### Third try (client version 19)
+1. Install the client script and restart DCS:
+   ```bash
+   cp lua/client/campaign_client.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+   ```
+2. `python3 -m tools.ride_probe 2>&1 | tee run29c.log`, host `campaign-dev/campaign-p22.miz`. Expect `CLIENT ... (version 19)`.
+3. Blue spectators, `-ride`, then **F4** when asked. Once chat says *You're in the Humvee*, look around with the mouse (and head tracking, if you use it): left, right, behind, up. Does the view follow you, and does it stay with you as the Humvee turns? Does it ever jump back ahead, or let go (`let go` in chat)?
+4. The seat height: better now? Try `-eye 0.2 0.45 1.3` or `1.5` if not.
+5. Once in the jet, go back to blue spectators before the next ride. Then `-ride` and **F11**: the same questions.
+6. `-ride chase`, F4: behind and above the Humvee. Can you look around there?
+7. `-ride fixed`, F4: the old view, for comparison.
+8. Ctrl-C the probe.
+
+Send back `run29c.log` and what you saw; a short video helps.
+
+### Results (2026-11-27, third try, client version 19)
+- **Looking around was janky.** In the clip the view tilted, swung down to the ground and turned to odd angles inside the cab. Keeping the direction DCS read back fed DCS's own camera changes back into the next frame, and they piled up.
+- **Every ride let go** of the camera: once on a real view change (499 m), twice after DCS's camera moved itself 2 to 3 m from where the script put it (the let-go limit was 2 m).
+- No crash.
+
+**Changed for the fourth try (client version 20):** `Scripts/Export.lua` documents a camera request (`LoCreateCameraRequest`, `LoForceCamera`) that puts DCS's own object camera ("CameraObject", RCtrl+F2) on an object, optionally at a position, though it says it's "not enabled yet for general public release". If this DCS has it, the ride asks for that camera on the Humvee: from outside for 3 s (like F4), then at the passenger seat, first as a position in the Humvee's own axes, then in world coordinates. DCS then follows the Humvee itself and you look around as usual; the script stops placing the camera. If neither seat position works, it stays outside on the Humvee. Without the camera request, the ride places the camera as in the second try (view fixed ahead) and presses F4 for you (the command's number from DCS's input tables). `F4` is "camera mounted on object" (`iCommandViewRear`); Ctrl+F4 is the chase view.
+
+### Fourth try (client version 20)
+1. Install the client script and restart DCS:
+   ```bash
+   cp lua/client/campaign_client.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+   ```
+2. `python3 -m tools.ride_probe 2>&1 | tee run29d.log`, host `campaign-dev/campaign-p22.miz`. Expect `CLIENT ... (version 20)`.
+3. Blue spectators, `-ride`, and **don't press anything**. The first `RIDE` line says `camera request available` or `n/a`. Watch the chat:
+   - *Your view goes to the Humvee*: DCS's camera. Does your view jump to the Humvee from outside? Can you look around (mouse, head tracking) and does it follow the Humvee? After 3 s, *You're in the Humvee's passenger seat*, or *DCS's camera stays outside*: where is your view, and can you still look around?
+   - *No DCS camera for the script*: the second try's ride (fixed view). Did your view move without pressing F4?
+4. At the jet: the hand-off into the cockpit as before?
+5. `-ride place`: the second try's way, for comparison (press F4 yourself if your view doesn't move).
+6. Ctrl-C the probe.
+
+Send back `run29d.log` (the `RIDE ... native` lines give where the camera sat relative to the Humvee at each step) and what you saw; a clip helps.
+
+### Results (2026-11-27, fourth try, client version 20)
+- **DCS's camera request isn't usable as is:** `LoCreateCameraRequest` exists but returned nil in DCS 2.9.32, so every ride placed the camera itself.
+- **The script pressed F4 itself** (`LoSetCommand(359)`, `iCommandViewRear` from DCS's input tables): the camera held within 1 to 2 s with no key pressed.
+- **`-ride chase` worked well:** the camera held behind and above the Humvee the whole way (12,033 of 12,034 frames), then into the cockpit (clip).
+- **The seat view let go after 15 to 25 s,** with the camera 3 to 4 m from where it was put: DCS nudging F4's camera, likely with the mouse.
+- **The spectated object didn't change:** F4 is the camera mounted on what you were spectating, and the bottom-left label still named that aircraft. The script moves the camera, not what DCS thinks you're watching.
+
+**Changed for the fifth try (client version 21):** chase is the default view. Holding, the ride lets go only if DCS moves the camera 25 m or more (a real view change). Since `LoCreateCameraRequest` gives nil, the script builds the request itself (the fields Export.lua documents) and tries `LoForceCamera` once; if the view doesn't come to the Humvee within 0.5 s, it places the camera as before.
+
+**Wanted (2026-11-27):** the inside view, from the passenger seat; chase stays as a test option. So version 22, before the fifth try was run, makes the seat the default again and tries to make the Humvee the object DCS watches, which version 21 couldn't:
+
+**Version 22:** after the camera request (if it fails), the script presses F7 (ground unit view, `iCommandViewGround`) until the camera is within 80 m of the Humvee (each press moves to the next ground unit; at most 8), then F4 (camera mounted on the watched object, now the Humvee). It puts the camera at the seat once and watches for 2 s: if DCS keeps it at the seat as the Humvee drives, DCS follows it and you look around as usual. If not, the script places it every frame, keeping DCS's view direction (which now belongs to the Humvee, not the old aircraft: Run 29's third try tumbled with the aircraft). If F7 never reaches the Humvee, it places the camera on F4 as in the fourth try. `-ride chase` leaves DCS's F4 camera on the Humvee alone.
+
+### Fifth try (client version 22)
+1. Install the client script and restart DCS:
+   ```bash
+   cp lua/client/campaign_client.lua ~/Games/dcs-world/drive_c/users/tim/"Saved Games"/DCS/Scripts/Hooks/
+   ```
+2. `python3 -m tools.ride_probe 2>&1 | tee run29e.log`, host `campaign-dev/campaign-p22.miz`. Expect `CLIENT ... (version 22)`.
+3. Blue spectators, `-ride` (the seat), no keys. Chat: *Getting your view onto the Humvee*, then one of:
+   - *You're in the Humvee's passenger seat: look around as you like*: DCS's own camera on the Humvee. Does the bottom-left label name the Humvee? Look around with the mouse (and head tracking): smooth, and does it stay in the seat to the jet?
+   - *... (the script holds the camera there)*: placed every frame, with your view direction. Can you look around, and does it stay level (no tumbling like the third try)?
+   - *Couldn't get the view onto the Humvee*: the fourth try's way. What did F7 show (the `RIDE ... F7 landed` lines say where)?
+4. At the jet: into the cockpit as before?
+5. `-ride chase`: DCS's F4 camera on the Humvee, from behind. Does the bottom-left label name the Humvee, and can you look around?
+6. `-ride fixed`: the seat, view straight ahead, for comparison.
+7. Ctrl-C the probe.
+
+Send back `run29e.log` and what you saw; a clip helps.
+
+### Results (2026-11-27, fifth try, client version 22)
+- **The seat ride works with DCS's own camera.** The built camera request did nothing (the view stayed 360 km off), so the script pressed F7: the first press landed on the Humvee (10 m), F4 mounted the camera on it, and the camera placed once at the seat stayed there by itself as the Humvee drove (checked at 0.5 to 2 s: 0.2 m ahead, 1.4 m up, 0.4 to 0.5 m right). DCS followed the Humvee to the jet with no further placing, you could look around, and the hand-off into the cockpit worked. "Worked very well."
+- **The seat view sat low and turned a little to the side** (clip): the camera was placed once with the Humvee's heading only, and DCS then keeps it fixed to the Humvee, so the Humvee's pitch and bank at that moment (it starts on uneven ground) stayed in the view.
+- **`-ride chase` worked:** DCS's F4 camera on the Humvee, from behind.
+- The chat said *Your view goes to the Humvee* when the camera request was only sent, not when it worked.
+
+**Changed (client version 23):** the seat is placed with the Humvee's whole attitude (heading, pitch and bank from `LoGetObjectById`), logged as `placed at the seat, the Humvee at heading ..., pitch ..., bank ...`; the eye is a little higher (0.2 m forward, 0.45 m right, 1.55 m up); that chat line comes only when DCS's camera came. To try: as the fifth try, with version 23 (`run29f.log`): is the seat view level and straight ahead now, and the height right? `-eye` adjusts it.
+
+**For the campaign version** (asked 2026-11-27, not now): the ride may need to drop several players at their jets in turn; the parked jets should be visible as the Humvee drives up (Client jets aren't in the world until someone takes the slot: statics, or AI jets parked there, standing in for them); the Humvee drives off after the last drop; it follows the base's roads and taxiways instead of driving straight across the ground; and it starts somewhere sensible (by the base's buildings, not on a random parking spot). See backlog item 2.
+
+### Results (2026-11-27, sixth try, client version 23)
+- **The seat view is level now and points ahead** ("pretty good placement"; clip).
+- **The camera sits inside the passenger figure:** the Humvee model has a driver and a passenger, and looking down shows the passenger's arms and legs around the camera, slightly off from where its head is. The figures can't be removed from the model.
+
+**Changed (client version 24):** `-eye` and the new `-nudge` (relative) move the seat camera during the ride, at once, so it can be tuned to the passenger's head while looking at it. `-car TYPE` picks the vehicle for the next ride and `-cars` lists some to try: the Humvee family (`Hummer`, `M1043 HMMWV Armament`, `M1045 HMMWV TOW`, one body), the airfield vehicles (`P20_drivable` utility truck, `TugHarlan_drivable` and `B600_drivable` tugs, `r11_volvo_drivable` fuel truck), and `Willys_MB`, `UAZ-469`, `Tigr_233036`, `VAZ Car`, `tacr2a` (Range Rover fire truck). Which have crew figures, and what their cabs look like, is for the try to find out.
+
+### Seventh try (client version 24)
+1. Install the client script and restart DCS (`cp` as before). `python3 -m tools.ride_probe 2>&1 | tee run29g.log`, host `campaign-dev/campaign-p22.miz`; expect `CLIENT ... (version 24)`.
+2. **Tune the Humvee seat.** Blue spectators, `-ride`. Once in the seat, look down and to the right and `-nudge` until your view sits at the passenger's eyes (e.g. `-nudge -0.1 0 0` 10 cm back, `-nudge 0 0.05 0` 5 cm right, `-nudge 0 0 0.05` 5 cm up). Each reply gives the whole setting: note the best one.
+3. **Other vehicles.** Back to blue spectators between rides. `-car P20_drivable`, `-ride`; then `-car TugHarlan_drivable`, `-car Willys_MB`, and any other from `-cars` you like. For each: does it drive to the jet, is there someone in the seat, and how does the cab look from the seat (`-nudge` to fit)?
+4. Ctrl-C the probe.
+
+Send back `run29g.log` (it has every `-eye`/`-nudge` setting), which vehicle you liked and its best seat setting; a clip helps.

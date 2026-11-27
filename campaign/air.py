@@ -11,7 +11,12 @@ The air spawner owns a ``Flight``'s DCS projection:
   fuel, so a later ``spawn`` (air start) resumes it where it was;
 - reaching an ``EXIT`` waypoint counts as getting home (bases off the map);
 - watchdogs abort a ramp flight that never takes off (taxi deadlocks) and recover a landed
-  flight that never shuts down.
+  flight that never shuts down;
+- ``adopt`` takes on a players' flight: its Client group, built into the session mission
+  (campaign/session.py), is the flight once its first unit is born. It's never despawned or taken
+  out of DCS (players sit in it): landed, it's recovered without despawning; players leaving it on
+  the ground give it back to the base, still waiting for them; leaving it in the air counts as
+  coming home (aborted).
 
 Talks to DCS through an injected ``call(op, data)`` coroutine, like the ground spawner.
 """
@@ -68,6 +73,9 @@ class AirSpawner:
         self.notify = notify
         self.live: dict[str, _Live] = {}
         self.orphans: set[str] = set()
+        # Players' flights in DCS (adopt): DCS group or unit name -> (flight id, unit index or None).
+        self.client_names: dict[str, tuple[str, int | None]] = {}
+        self.client: set[str] = set()     # ids of the flights flown in a Client group
 
     # ---------- save / load ----------
 
@@ -78,7 +86,7 @@ class AirSpawner:
         return {fid: {"names": live.names, "age": age(live.spawned_at), "started_age": age(live.started_at),
                       "landed_age": age(live.landed_at), "dead": sorted(live.dead),
                       "landed": sorted(live.landed), "shutdown": sorted(live.shutdown),
-                      "took_off": live.took_off, "number": live.number}
+                      "took_off": live.took_off, "number": live.number, "client": fid in self.client}
                 for fid, live in self.live.items()}
 
     def restore(self, data: dict[str, Any]) -> None:
@@ -96,6 +104,8 @@ class AirSpawner:
                                    landed=set(d.get("landed", ())), shutdown=set(d.get("shutdown", ())),
                                    landed_at=at(d.get("landed_age")), took_off=bool(d.get("took_off")),
                                    number=int(d.get("number", 0)))
+            if d.get("client"):
+                self._name_client(f, f.dcs_group or "", list(d["names"]))
         # A flight saved as spawned without bookkeeping (shouldn't happen) is adopted with what we know.
         for f in self.state.flights.values():
             if f.spawn is SpawnState.SPAWNED and f.id not in self.live:
@@ -134,6 +144,41 @@ class AirSpawner:
                                      number=number)
         self._notify(flight, "held on the ramp" if uncontrolled else "spawned")
 
+    def adopt(self, flight: Flight, group: str, unit_names: list[str]) -> None:
+        """A players' flight is in DCS: its Client group ``group`` (units ``unit_names``, seat order)
+        from the session mission, whose first unit was just born."""
+        if flight.spawn is SpawnState.SPAWNED:
+            raise ValueError(f"{flight.id} is already in DCS")
+        sq = self.state.squadrons[flight.squadron_id]
+        if flight.state is FlightState.PLANNED:
+            if sq.aircraft_ready < flight.aircraft:
+                log.warning("%s: %s has %d aircraft ready for %d seats; flying anyway", flight.id, sq.name,
+                            sq.aircraft_ready, flight.aircraft)
+            sq.aircraft_ready = max(0, sq.aircraft_ready - flight.aircraft)
+        flight.spawn = SpawnState.SPAWNED
+        flight.dcs_group = group
+        flight.state = FlightState.TAXI
+        # started_at None: no taxi watchdog, the players take off when they're ready.
+        self.live[flight.id] = _Live(names=list(unit_names), spawned_at=self.clock(), started_at=None,
+                                     dead=set(), landed=set(), shutdown=set(), number=flight.number)
+        self._name_client(flight, group, unit_names)
+        self._notify(flight, "in DCS: players in its jets")
+
+    def _name_client(self, flight: Flight, group: str, unit_names: list[str]) -> None:
+        self.client.add(flight.id)
+        self.client_names[group] = (flight.id, None)
+        for i, n in enumerate(unit_names, 1):
+            self.client_names[n] = (flight.id, i)
+
+    def ident(self, name: str | None) -> tuple[str, int | None] | None:
+        """(flight id, unit index or None for the group) for a DCS name of a campaign flight."""
+        if name in self.client_names:
+            return self.client_names[name]
+        parsed = parse_dcs_name(name)
+        if parsed and parsed.prefix == PREFIX_FLIGHT:
+            return parsed.model_id, parsed.unit_index
+        return None
+
     async def start(self, flight: Flight) -> None:
         """Start an uncontrolled (held) flight: it starts up, taxis and flies its route."""
         live = self._live(flight)
@@ -144,6 +189,8 @@ class AirSpawner:
     async def aggregate(self, flight: Flight) -> None:
         """Take an airborne flight out of DCS, keeping where it was and how much fuel it had."""
         live = self._live(flight)
+        if flight.id in self.client:
+            raise ValueError(f"{flight.id} is flown by players: it stays in DCS")
         res = await self._despawn(flight, live) or {}
         if res.get("gone"):
             self._gone(flight)
@@ -183,7 +230,10 @@ class AirSpawner:
     async def recover(self, flight: Flight, why: str = "recovered") -> None:
         """Despawn a flight that is home (landed, or left the map) and return its aircraft."""
         live = self._live(flight)
-        res = await self._despawn(flight, live) or {}
+        if flight.id in self.client:   # players are in it: not despawned, they leave when they like
+            res = {"alive": [n for n in live.names if n not in live.dead]}
+        else:
+            res = await self._despawn(flight, live) or {}
         survivors = 0 if res.get("gone") else len(as_list(res.get("alive")))
         self.state.squadrons[flight.squadron_id].aircraft_ready += survivors
         flight.aircraft = survivors
@@ -195,6 +245,8 @@ class AirSpawner:
 
     def on_hello(self, hello: Hello, new_run: bool) -> None:
         live_groups = set(hello.spawned)
+        if new_run:   # a new mission: no Client group is in DCS until a player gets in again
+            live_groups -= set(self.client_names)
         for f in self.state.flights.values():
             if f.spawn is not SpawnState.SPAWNED:
                 continue
@@ -215,10 +267,10 @@ class AirSpawner:
         for g in as_list(data.get("groups")):
             if not isinstance(g, dict):
                 continue
-            parsed = parse_dcs_name(g.get("id"))
-            if not parsed or parsed.prefix != PREFIX_FLIGHT:
+            who = self.ident(g.get("id"))
+            if who is None:
                 continue
-            f = self.state.flights.get(parsed.model_id)
+            f = self.state.flights.get(who[0])
             if f is None or f.spawn is not SpawnState.SPAWNED:
                 continue
             seen.add(f.id)
@@ -279,11 +331,11 @@ class AirSpawner:
         kind = data.get("kind")
         unit = data.get("unit") or {}
         name = unit.get("name")
-        parsed = parse_dcs_name(name)
-        if not parsed or parsed.prefix != PREFIX_FLIGHT or parsed.unit_index is None:
+        who = self.ident(name)
+        if who is None or who[1] is None:
             return
-        f = self.state.flights.get(parsed.model_id)
-        live = self.live.get(parsed.model_id)
+        f = self.state.flights.get(who[0])
+        live = self.live.get(who[0])
         if f is None or live is None:
             return
         if kind == "takeoff":
@@ -384,6 +436,13 @@ class AirSpawner:
     def _vanished(self, f: Flight) -> None:
         """The group is gone from DCS without us despawning it (mission restart, or removed)."""
         live = self.live.get(f.id)
+        if f.id in self.client and live is not None and live.took_off and f.state is not FlightState.LANDED:
+            # Players left their jets in the air (or the mission ended under them): they're home.
+            self.state.squadrons[f.squadron_id].aircraft_ready += f.aircraft
+            f.state = FlightState.LANDED
+            self._detach(f)
+            self._notify(f, f"players left in the air: counted as back at base ({f.aircraft} aircraft)")
+            return
         if f.state in (FlightState.PLANNED, FlightState.TAXI) or (live and not live.took_off):
             # Never got airborne: the aircraft are still at the base.
             self.state.squadrons[f.squadron_id].aircraft_ready += f.aircraft
@@ -392,7 +451,8 @@ class AirSpawner:
             self.state.squadrons[f.squadron_id].aircraft_ready += f.aircraft
         else:
             f.start = StartMode.AIR  # resume in the air where it was last seen
-        early = live is not None and not live.took_off and self.clock() - live.spawned_at < 60
+        early = (live is not None and not live.took_off and self.clock() - live.spawned_at < 60
+                 and f.id not in self.client)
         self._detach(f)
         if early:
             sq = self.state.squadrons[f.squadron_id]
@@ -410,6 +470,10 @@ class AirSpawner:
         f.spawn = SpawnState.AGGREGATED
         f.dcs_group = None
         self.live.pop(f.id, None)
+        if f.id in self.client:
+            self.client.discard(f.id)
+            for n in [n for n, (fid, _) in self.client_names.items() if fid == f.id]:
+                del self.client_names[n]
 
     def _notify(self, f: Flight, what: str) -> None:
         log.info("%s %s", f.id, what)

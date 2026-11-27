@@ -11,6 +11,9 @@ Rules:
   duration, and are home when they reach LAND or EXIT.
 - Flights on the ground in DCS (taxiing, landed) are left to ``AirSpawner``: it recovers them.
 - At most ``max_flights`` campaign flights are in DCS; the closest to a player spawn first.
+- A committed flight (players have its Client group in the session mission: campaign/session.py)
+  waits for them: it isn't launched while it's committed, and once players are in it, it's never
+  taken out of DCS.
 
 Time is DCS model time from telemetry, so time acceleration speeds the whole war up and a paused
 mission stops it. The campaign clock (``CampaignState.clock``) advances by the same amount.
@@ -187,6 +190,10 @@ class AirBubble:
         for f in self.state.flights.values():
             if f.id in self.busy or self.backoff_until.get(f.id, -math.inf) > now or f.aircraft <= 0:
                 continue
+            if f.committed and f.spawn is SpawnState.AGGREGATED and f.state is FlightState.PLANNED:
+                continue   # waiting for its players (the session releases it to the AI if they don't come)
+            if f.id in self.air.client:
+                continue   # players are flying it: it stays in DCS
             if f.spawn is SpawnState.AGGREGATED and f.state is FlightState.PLANNED and f.takeoff_time <= now:
                 base = self.base_pos(self.state.squadrons[f.squadron_id])
                 if f.start is not StartMode.AIR and base is not None and nearest(base, self.observers) <= cfg.air_spawn:

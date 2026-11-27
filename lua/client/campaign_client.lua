@@ -16,11 +16,14 @@ else. Without it, players join through the normal slot list.
 RPC methods (server -> this client):
   campaignJoin(spawn)   spawn = the slot screen's fields; pylon_list = [{num, CLSID}] (JSON can't
                         carry sparse numeric keys). userId, nickName and coalition are filled in here.
-  campaignEnter()       net.spawn_player() only: enter a slot the server already gave us.
+  campaignEnter()       net.spawn_player() only: enter a slot the server already gave us (the war
+                        map's Fly button; the map closes).
   campaignWindow(spec)  show a campaign window (dxgui): spec = { title, lines = [..],
                         buttons = [{key, label}] }. Ctrl+Shift+F9 shows or hides it.
   campaignWeb(arg)      open a web page in DCS (its Chromium widget): arg = { html =, mode = mount|data|stock }
                         or { url = }.
+  campaignRide(spec), campaignRidePos(p), campaignRideEye(eye), campaignRideStop(why)
+                        P22: the camera rides in a vehicle the server drives to the jet (see ride_frame).
   campaignMap(spec)     show the war map (proof P21): a native window with the Mission Editor's map widget,
                         the server's symbols on it and a side panel. Ctrl+Shift+F8 shows or hides it. See
                         open_map for the spec.
@@ -37,7 +40,7 @@ network (DCS can't send RPC to itself).
 Lua 5.1 (DCS).
 ]]
 
-local VERSION = 14
+local VERSION = 24
 
 local function log_info(msg) log.write("CAMPAIGN-CLIENT", log.INFO, msg) end
 local function log_error(msg) log.write("CAMPAIGN-CLIENT", log.ERROR, msg) end
@@ -62,9 +65,13 @@ end
 -- (Its UI modules, e.g. MultiplayerSelectRole, are not loadable from Hooks: Run 14c.)
 -- Run 14c: works for a mission slot the server moved us into (force_player_slot); for a dynamic
 -- slot, DCS logs spawnLocalPlayer but the player is not put in the jet.
+local close_war_map   -- the war map's own close (below): Fly closes it
+local stop_ride      -- P22's ride to the jet (below): getting in ends it
 local function enter()
+  if stop_ride then pcall(stop_ride, "entered") end
   net.spawn_player()
   pcall(function() Sim.setViewPause(false) end)
+  if close_war_map then pcall(close_war_map) end
   log_info("entered: net.spawn_player")
 end
 
@@ -359,6 +366,10 @@ end
 --   joins = { ["f:1"] = { label, key, ok }, ... }   (version 14) the join button while that flight
 --                         is selected: pressing it sends campaignClick(key) ("join:f:1", "leave:f:1");
 --                         ok = false greys it out (full, taken off)
+--   actions = { ["f:1"] = { label, key, ok, opens_in, ready }, ... }   (version 15) the button under
+--                         it for a player seated in that flight: Commit ("commit:f:1", the lead) or
+--                         Fly ("fly:f:1"). opens_in = seconds: greyed out until then (counted down
+--                         on DCS model time, like takeoff_in), then enabled as ready
 --   objects = {           all positions in mission metres (x north, y east), colours {r, g, b, a} 0..1
 --     { kind = "icon", x, y, sym = SYMBOLS key, color, heading (deg), label, info }
 --     { kind = "text", x, y, text, color, fill, size, info }                   (drawing layer)
@@ -579,18 +590,31 @@ local function set_flights(spec)
 end
 
 -- Once a second while the map is open: count the take-offs down.
--- The join button: shown while a flight players can fly is selected (spec.joins).
+-- The join button (spec.joins) and the one under it (spec.actions: Commit or Fly), shown while a
+-- flight players can fly is selected. A Fly that isn't open yet opens here when its time comes.
+local function action_of(j, now)
+  if type(j) ~= "table" then return nil, false end
+  if j.opens_in and map_flights_t and now and tonumber(j.opens_in) - (now - map_flights_t) <= 0 then
+    return tostring(j.ready or j.label or ""), j.key ~= nil and j.key ~= ""
+  end
+  return tostring(j.label or ""), j.ok == true
+end
+
+local function show_button(b, j, now)
+  local label, ok = action_of(j, now)
+  if not label then b:setVisible(false) return end
+  b:setText(label)
+  b:setEnabled(ok)
+  b:setVisible(true)
+end
+
 update_join = function()
   if not map_window then return end
   local joins = map_spec and type(map_spec.joins) == "table" and map_spec.joins or {}
-  local j = map_selected and joins[map_selected]
-  if type(j) ~= "table" then
-    map_window.btnJoin:setVisible(false)
-    return
-  end
-  map_window.btnJoin:setText(tostring(j.label or "Join"))
-  map_window.btnJoin:setEnabled(j.ok == true)
-  map_window.btnJoin:setVisible(true)
+  local acts = map_spec and type(map_spec.actions) == "table" and map_spec.actions or {}
+  local now = model_time()
+  show_button(map_window.btnJoin, map_selected and joins[map_selected], now)
+  show_button(map_window.btnAct, map_selected and acts[map_selected], now)
 end
 
 tick_flights = function()
@@ -603,6 +627,11 @@ tick_flights = function()
   for i = 1, math.min(#list, MAP_FLIGHTS) do
     local b = map_window["btnFlight" .. i]
     if b then b:setText(flight_label(list[i], now)) end
+  end
+  local acts = type(map_spec.actions) == "table" and map_spec.actions or {}
+  local a = map_selected and acts[map_selected]
+  if type(a) == "table" and a.opens_in and map_window.btnAct:getText() ~= "..." then
+    show_button(map_window.btnAct, a, now)   -- Fly opens
   end
 end
 
@@ -747,7 +776,8 @@ local function map_window_table(W, H)
   local info_h = math.max(200, math.floor(H * 0.25))
   local buttons_y = H - 3 * 34 - 8
   local info_y = buttons_y - info_h - 8
-  local join_y = info_y - 8 - 30
+  local act_y = info_y - 8 - 30
+  local join_y = act_y - 34
   local flights_y = join_y - 8 - 24 - MAP_FLIGHTS * 32
   local children = {
     txtPanel = static(x0, HEADER + 8, pw, flights_y - HEADER - 16, "", 14, "0xd0d0d0ff"),
@@ -763,6 +793,7 @@ local function map_window_table(W, H)
     btnModeSat = button(x0 + 2 * (bw + pad), buttons_y, bw, 28, "Satellite"),
     btnCenter = button(x0, buttons_y + 34, pw, 28, "Back to the front"),
     btnJoin = button(x0, join_y, pw, 28, "Join"),
+    btnAct = button(x0, act_y, pw, 28, "Commit"),
     btnCloseMap = button(x0, buttons_y + 68, pw, 28, "Close (" .. MAP_HOTKEY .. ")"),
   }
   for i = 1, MAP_FLIGHTS do
@@ -799,6 +830,11 @@ close_map = function()
   end
   map_window, map_view, map_size = nil, nil, nil
   map_selected, map_zoomed = nil, false
+end
+
+-- Fly: the jet, not the map (it stays for the hotkey).
+close_war_map = function()
+  if map_window then map_window:setVisible(false) end
 end
 
 local function build_map()
@@ -868,16 +904,20 @@ local function build_map()
       redraw("selected " .. tostring(f.select))
     end)
   end
-  map_window.btnJoin:setVisible(false)
-  map_window.btnJoin:addChangeCallback(function()
-    local joins = map_spec and type(map_spec.joins) == "table" and map_spec.joins or {}
-    local j = map_selected and joins[map_selected]
-    if type(j) ~= "table" or not j.ok or not j.key or j.key == "" then return end
-    map_event("map_click", "button " .. tostring(j.key))
-    to_server("campaignClick", tostring(j.key))
-    map_window.btnJoin:setText("...")       -- the server answers with a fresh map
-    map_window.btnJoin:setEnabled(false)
-  end)
+  for name, field in pairs({ btnJoin = "joins", btnAct = "actions" }) do
+    local b = map_window[name]
+    b:setVisible(false)
+    b:addChangeCallback(function()
+      local all = map_spec and type(map_spec[field]) == "table" and map_spec[field] or {}
+      local j = map_selected and all[map_selected]
+      local _, ok = action_of(j, model_time())
+      if not ok or not j.key or j.key == "" then return end
+      map_event("map_click", "button " .. tostring(j.key))
+      to_server("campaignClick", tostring(j.key))
+      b:setText("...")       -- the server answers with a fresh map
+      b:setEnabled(false)
+    end)
+  end
   map_window.btnCloseMap:addChangeCallback(function() map_window:setVisible(false) end)
   map_window.onClose = function() map_window:setVisible(false) end
 end
@@ -958,6 +998,546 @@ function RPC.method.campaignMap(sender_id, spec)
   if not ok then map_event("map", "failed: " .. tostring(err)) end
 end
 
+-- ---------- P22: ride to the jet (the camera follows a vehicle the server drives) ----------
+-- campaignRide(spec) starts it, campaignRidePos(p) is the vehicle's latest position from the
+-- server, campaignRideStop() ends it (so does entering a jet). The camera goes to a seat in the
+-- vehicle (or behind it, view = "chase") with Export.LoSetCameraPosition, in a view that lets it
+-- (see ride_frame). Where the
+-- vehicle is: from Export.LoGetWorldObjects when DCS lets this PC read objects (always for the
+-- host; for a client, the server's allow_object_export), else from the server's positions,
+-- carried forward at the vehicle's speed and smoothed. Export coordinates: x north, y up, z east;
+-- the mission's x north, y east. What happened goes back as campaignWebEvent("ride", ...).
+-- spec = { unit = "P22 Humvee-1", view = "seat" | "chase", eye = { fwd, right, up } (metres),
+--          native = false (don't ask for DCS's object camera: place the camera every frame),
+--          look = true (placing it: keep the player's view direction; Run 29 third try: it drifted),
+--          chase = { back, up } (metres), report_s = 2 }
+local ride = nil
+
+local function ride_event(detail) pcall(to_server, "campaignWebEvent", "ride", detail) end
+
+local function export_fn(name)
+  local E = Export
+  if type(E) ~= "table" then return nil end
+  local f = E[name]
+  return type(f) == "function" and f or nil
+end
+
+local function allowed(name)
+  local f = export_fn(name)
+  if not f then return "n/a" end
+  local ok, v = pcall(f)
+  return ok and tostring(v) or ("error " .. tostring(v))
+end
+
+-- The vehicle in DCS's own world objects, if this PC may read them: its object id, or nil and why.
+local function find_object(unit)
+  local list_fn = export_fn("LoGetWorldObjects")
+  if not list_fn then return nil, "no LoGetWorldObjects" end
+  local ok, objs = pcall(list_fn, "units")
+  if not ok then return nil, "LoGetWorldObjects: " .. tostring(objs) end
+  if type(objs) ~= "table" then return nil, "LoGetWorldObjects gave " .. type(objs) end
+  local n = 0
+  for id, o in pairs(objs) do
+    n = n + 1
+    if type(o) == "table" and o.UnitName == unit then return id, n .. " objects" end
+  end
+  return nil, "not among " .. n .. " objects"
+end
+
+local function now_s() return Sim.getRealTime() end
+
+-- Where the vehicle is now: x north, z east (Export coordinates), heading (radians, from north),
+-- y of the ground (or the object's own), and which source it came from.
+local function vehicle_now()
+  if ride.obj then
+    local get = export_fn("LoGetObjectById")
+    local ok, o = pcall(get, ride.obj)
+    if ok and type(o) == "table" and type(o.Position) == "table" then
+      return o.Position.x, o.Position.y, o.Position.z, tonumber(o.Heading) or 0, "objects",
+             tonumber(o.Pitch) or 0, tonumber(o.Bank) or 0
+    end
+    ride.obj = nil
+    ride_event("object lost: falling back to the server's positions")
+  end
+  local p = ride.last
+  if not p then return nil end
+  local dt = math.min(now_s() - p.at, 1.0)   -- carry it forward at its speed, at most 1 s
+  local h = p.hdg
+  local x, z = p.x + math.cos(h) * p.spd * dt, p.z + math.sin(h) * p.spd * dt
+  local s = ride.smooth
+  if not s then
+    s = { x = x, z = z, h = h }
+    ride.smooth = s
+  else
+    local a = math.min(1, (now_s() - (s.at or now_s())) / 0.25)   -- about 0.25 s to catch up
+    s.x, s.z = s.x + (x - s.x) * a, s.z + (z - s.z) * a
+    local dh = (h - s.h + math.pi) % (2 * math.pi) - math.pi
+    s.h = s.h + dh * a
+  end
+  s.at = now_s()
+  local y = p.alt
+  local alt_fn = export_fn("LoGetAltitude")
+  if alt_fn then
+    local ok, g = pcall(alt_fn, s.x, s.z)
+    if ok and tonumber(g) then y = tonumber(g) end
+  end
+  return s.x, y, s.z, s.h, "server"
+end
+
+local function v3(x, y, z) return { x = x, y = y, z = z } end
+
+-- The camera for vehicle position (x, y, z) and heading h: orientation x forward, y up, z right.
+-- Turn a vector by a (radians, clockwise seen from above) about the vertical.
+local function yaw(v, a)
+  local c, s = math.cos(a), math.sin(a)
+  return v3(v.x * c - v.z * s, v.y, v.x * s + v.z * c)
+end
+
+-- Looking around (version 19, Run 29: the view was fixed). While the camera holds, the orientation
+-- DCS read back last frame, with the player's mouse or head movement in it, is kept, turned with the
+-- vehicle; only the position is the script's.
+local function looked(cam, h)
+  local l = ride.look_on and ride.look
+  if l and ride.look_raw then   -- mounted on the Humvee: DCS's direction is already the Humvee's
+    cam.x, cam.y, cam.z = l.x, l.y, l.z
+  elseif l then
+    local a = h - l.h
+    cam.x, cam.y, cam.z = yaw(l.x, a), yaw(l.y, a), yaw(l.z, a)
+  end
+  ride.cam_h = h
+  return cam
+end
+
+local function camera_for(x, y, z, h)
+  local fx, fz = math.cos(h), math.sin(h)    -- forward, flat
+  local rx, rz = -fz, fx                     -- right
+  if ride.view == "chase" then
+    local back, up = ride.chase[1], ride.chase[2]
+    local px, py, pz = x - fx * back, y + up, z - fz * back
+    local tx, ty, tz = x + fx * 5, y + 1.5, z + fz * 5   -- look a little ahead of it
+    local dx, dy, dz = tx - px, ty - py, tz - pz
+    local n = math.sqrt(dx * dx + dy * dy + dz * dz)
+    dx, dy, dz = dx / n, dy / n, dz / n
+    local hn = math.sqrt(dx * dx + dz * dz)
+    -- up = right x forward, with right flat
+    local ux, uy, uz = -dy * dx / hn, hn, -dy * dz / hn
+    return looked({ x = v3(dx, dy, dz), y = v3(ux, uy, uz), z = v3(-dz / hn, 0, dx / hn), p = v3(px, py, pz) }, h)
+  end
+  local e = ride.eye
+  return looked({ x = v3(fx, 0, fz), y = v3(0, 1, 0), z = v3(rx, 0, rz),
+                  p = v3(x + fx * e[1] + rx * e[2], y + e[3], z + fz * e[1] + rz * e[2]) }, h)
+end
+
+stop_ride = function(why)
+  if not ride then return end
+  local r = ride
+  ride = nil
+  ride_event(string.format("stopped (%s) after %.0f s, %s: %d frames, %d tries, camera held %d, moved by DCS %d, set failed %d",
+    why, now_s() - r.started, r.state, r.frames, r.tries, r.held, r.moved, r.failed))
+  log_info("ride stopped: " .. why)
+end
+
+local ride_frame   -- placing the camera ourselves (below)
+
+local function look_for_object()
+  if ride.obj or now_s() < ride.next_find then return end   -- object export may come and go; look now and then
+  ride.next_find = now_s() + (ride.want_native and 0.5 or 5)
+  local id, why = find_object(ride.unit)
+  ride.obj = id
+  if id ~= ride.found then
+    ride.found = id
+    ride_event(id and ("vehicle found in world objects (id " .. tostring(id) .. ", " .. why .. ")")
+                  or ("vehicle not readable here: " .. why))
+  end
+end
+
+-- ---- Version 20: DCS's own camera on the vehicle (LoCreateCameraRequest / LoForceCamera) ----
+-- Run 29: placing the camera every frame works in F4 but fights DCS (no looking around, drift when
+-- the script tried). Export.lua documents a camera request: "CameraObject" (RCtrl+F2, object
+-- local camera) on an object id, optionally at a position. If this DCS has it, DCS itself follows
+-- the vehicle and the player looks around as usual: first from outside (as F4 would), then inside
+-- at the seat. Export.lua marks it "not enabled yet for general public release", so every step is
+-- checked and reported, and without it the ride falls back to placing the camera (and tries to
+-- switch to F4 itself).
+local OUTSIDE_S = 3.0    -- outside the vehicle this long before moving inside
+local SETTLE_S = 0.5     -- after a request, read the camera back this much later
+local INSIDE_M = 3.0     -- the camera this close to the seat (each axis) is inside
+
+local function force_camera(name, id, pos)
+  local create, force = export_fn("LoCreateCameraRequest"), export_fn("LoForceCamera")
+  if not force then return false, "LoForceCamera n/a" end
+  create = create or function() return nil end
+  local ok, req = pcall(create)
+  -- Run 29 fourth try: LoCreateCameraRequest returned nil in DCS 2.9.32; build the request ourselves
+  -- (the fields Export.lua documents) and see whether LoForceCamera takes it.
+  if not ok or type(req) ~= "table" then
+    ride.request_note = "LoCreateCameraRequest gave " .. tostring(req) .. ", request built here"
+    req = { name = "CameraFree", id = 0, fov = -1.0, valid_pos = false,
+            pos = { x = v3(1, 0, 0), y = v3(0, 1, 0), z = v3(0, 0, 1), p = v3(0, 0, 0) } }
+  end
+  req.name, req.id, req.fov = name, id, -1.0
+  if pos then req.pos, req.valid_pos = pos, true else req.valid_pos = false end
+  local ok2, err = pcall(force, req)
+  if not ok2 then return false, "LoForceCamera: " .. tostring(err) end
+  return true
+end
+
+-- The camera relative to the vehicle: forward, up, right (metres), and the distance.
+local function cam_from_vehicle()
+  local get, obj = export_fn("LoGetCameraPosition"), export_fn("LoGetObjectById")
+  if not (get and obj and ride.obj) then return nil end
+  local okc, c = pcall(get)
+  local okv, o = pcall(obj, ride.obj)
+  if not (okc and type(c) == "table" and type(c.p) == "table" and okv and type(o) == "table"
+          and type(o.Position) == "table") then return nil end
+  local h = tonumber(o.Heading) or 0
+  local dx, dy, dz = c.p.x - o.Position.x, c.p.y - o.Position.y, c.p.z - o.Position.z
+  local fx, fz = math.cos(h), math.sin(h)
+  return dx * fx + dz * fz, dy, -dx * fz + dz * fx, math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function rel_text()
+  local f, u, r, d = cam_from_vehicle()
+  if not f then return "camera unreadable" end
+  return string.format("camera %.1f m ahead, %.1f m up, %.1f m right of it (%.0f m)", f, u, r, d)
+end
+
+local function at_seat()
+  local f, u, r = cam_from_vehicle()
+  local e = ride.eye
+  return f and math.abs(f - e[1]) < INSIDE_M and math.abs(u - e[3]) < INSIDE_M and math.abs(r - e[2]) < INSIDE_M
+end
+
+-- Switch to F4 (camera mounted on object) as if the key were pressed: the command's number from
+-- DCS's input tables. Used when the camera request isn't there.
+-- Press a view key as if on the keyboard: the command's number from DCS's input tables.
+local function press(command, label)
+  local set = export_fn("LoSetCommand")
+  if not set then return "no LoSetCommand" end
+  local ok, Input = pcall(require, "Input")
+  if not ok or type(Input) ~= "table" or type(Input.getEnvTable) ~= "function" then return "no Input module" end
+  local ok2, env = pcall(Input.getEnvTable)
+  local id = ok2 and type(env) == "table" and type(env.Actions) == "table" and env.Actions[command]
+  if not id then return "no " .. command end
+  local ok3, err = pcall(set, id)
+  return ok3 and ("pressed " .. label .. " (command " .. tostring(id) .. ")") or ("LoSetCommand: " .. tostring(err))
+end
+
+local function press_f4() return press("iCommandViewRear", "F4") end
+
+-- ---- Version 22: make the Humvee the object DCS is watching (Run 29, fourth try) ----
+-- F4 is the camera mounted on the object being watched, and the script could move it but not
+-- change the object (the bottom-left label kept the aircraft; looking around tumbled with it).
+-- F7 (ground unit view) watches a ground unit, so: press F7 until the camera is near the Humvee
+-- (each press cycles to the next one), then F4 to mount the camera on it. Then put the camera at
+-- the seat once and watch: if DCS keeps it there as the Humvee drives, DCS follows it and the
+-- player looks around as usual ("mounted at the seat"); if not, the script places it every frame,
+-- keeping DCS's view direction, which now belongs to the Humvee ("placing, mounted").
+local FOCUS_PRESSES = 8    -- F7 this many times at most
+local FOCUS_M = 80         -- the camera this close to the Humvee after F7: it's watching it
+local WATCH_S = 2.0        -- after putting the camera at the seat once, watch this long
+
+local function focus_start(why)
+  ride.focus = { stage = "f7", at = now_s(), presses = 1 }
+  ride_event("focus: " .. why .. "; " .. press("iCommandViewGround", "F7"))
+end
+
+local function focus_fail(why)
+  ride.focus = nil
+  ride_event("focus: " .. why .. "; placing the camera instead; " .. press_f4())
+end
+
+-- The seat camera with the vehicle's whole attitude, not just its heading (Run 29, fifth try: placed
+-- once on a slope, the view stayed tilted, since DCS then keeps it fixed to the vehicle). Axes: x
+-- forward, y up, z right; pitch nose up, bank right side down (both radians, as LoGetObjectById).
+local function seat_cam()
+  local x, y, z, h, _, p, b = vehicle_now()
+  if not x then return nil end
+  p, b = p or 0, b or 0
+  local ch, sh, cp, sp, cb, sb = math.cos(h), math.sin(h), math.cos(p), math.sin(p), math.cos(b), math.sin(b)
+  local f = v3(cp * ch, sp, cp * sh)
+  local r0, u0 = v3(-sh, 0, ch), v3(-sp * ch, cp, -sp * sh)
+  local r = v3(r0.x * cb - u0.x * sb, r0.y * cb - u0.y * sb, r0.z * cb - u0.z * sb)
+  local u = v3(u0.x * cb + r0.x * sb, u0.y * cb + r0.y * sb, u0.z * cb + r0.z * sb)
+  local e = ride.eye
+  ride.seat_attitude = string.format("heading %.1f, pitch %.1f, bank %.1f deg", math.deg(h) % 360, math.deg(p), math.deg(b))
+  return { x = f, y = u, z = r, p = v3(x + f.x * e[1] + u.x * e[3] + r.x * e[2], y + f.y * e[1] + u.y * e[3] + r.y * e[2],
+                                       z + f.z * e[1] + u.z * e[3] + r.z * e[2]) }
+end
+
+local function focus_frame()
+  local f, t = ride.focus, now_s()
+  if t < f.at + SETTLE_S then return end
+  if f.stage == "f7" then
+    local _, _, _, d = cam_from_vehicle()
+    if d and d <= FOCUS_M then
+      f.stage, f.at = "f4", t
+      ride_event(string.format("focus: watching the Humvee after %d F7 (%.0f m); %s", f.presses, d, press_f4()))
+    elseif f.presses >= FOCUS_PRESSES then
+      focus_fail(string.format("F7 didn't reach the Humvee in %d presses (%s)", f.presses, rel_text()))
+    else
+      f.presses, f.at = f.presses + 1, t
+      ride_event("focus: F7 landed " .. rel_text() .. "; " .. press("iCommandViewGround", "F7"))
+    end
+  elseif f.stage == "f4" then
+    ride_event("focus: F4 on the Humvee: " .. rel_text())
+    if ride.view == "chase" then   -- DCS's own camera on the Humvee: leave it to DCS
+      f.stage, f.next_report = "dcs", t + ride.report_s
+      ride_event("focus: chase view: DCS's F4 camera on the Humvee, look around as usual")
+      return
+    end
+    local set = export_fn("LoSetCameraPosition")
+    local cam = seat_cam()
+    if not (set and cam and pcall(set, cam)) then return focus_fail("couldn't place the camera at the seat") end
+    f.stage, f.at, f.placed, f.next_check = "watch", t - SETTLE_S, t, t   -- checks at 0.5, 1, 1.5, 2 s
+    ride_event("focus: placed at the seat, the Humvee at " .. tostring(ride.seat_attitude))
+  elseif f.stage == "watch" then
+    if t < f.next_check + SETTLE_S then return end
+    f.next_check = t
+    ride_event(string.format("focus: %.1f s after placing it once: %s", t - f.placed, rel_text()))
+    if not at_seat() then
+      f.stage = "placing"
+      ride.look_on, ride.look_raw = ride.want_look, true
+      ride.state, ride.next_try = "waiting", 0
+      ride_event("focus: DCS doesn't keep it at the seat; placing it every frame, mounted on the Humvee"
+                 .. (ride.look_on and ", your view direction kept" or ", view fixed ahead"))
+    elseif now_s() >= f.placed + WATCH_S then
+      f.stage, f.next_report = "dcs", now_s() + ride.report_s
+      ride_event("focus: mounted at the seat: DCS follows the Humvee, look around as usual")
+    end
+  elseif f.stage == "dcs" and t >= f.next_report then
+    f.next_report = t + ride.report_s
+    local _, _, _, d = cam_from_vehicle()
+    if d and d > 200 and not f.away then
+      f.away = true
+      ride_event("focus: the view is elsewhere now (" .. rel_text() .. ")")
+    end
+    ride_event("focus, DCS's camera: " .. rel_text())
+  end
+end
+
+local function native_start()
+  local ok, err = force_camera("CameraObject", ride.obj, nil)
+  if not ok then
+    ride.want_native = false
+    focus_start("native: " .. err)
+    return
+  end
+  ride.native = { stage = "outside", at = now_s(), next_report = now_s() + SETTLE_S }
+  ride_event("native: asked for DCS's object camera on the vehicle" .. (ride.request_note and (" (" .. ride.request_note .. ")") or ""))
+end
+
+local function native_frame()
+  local n, t = ride.native, now_s()
+  if n.stage == "outside" then
+    if t >= n.next_report then
+      n.next_report = math.huge
+      local f, u, r, d = cam_from_vehicle()
+      ride_event("native, outside: " .. rel_text())
+      if d and d <= 200 then ride_event("native: the view came to the vehicle") end
+      if not d or d > 200 then   -- LoForceCamera took the request but the view didn't come
+        ride.native, ride.want_native = nil, false
+        focus_start("native: the view didn't go to the vehicle")
+        return
+      end
+    end
+    if t >= n.at + OUTSIDE_S and ride.view == "chase" then   -- chase: DCS's camera stays outside
+      n.stage, n.next_report = "outside only", t + ride.report_s
+      ride_event("native: staying outside (chase view)")
+    elseif t >= n.at + OUTSIDE_S then
+      local e = ride.eye   -- the object's own axes: x forward, y up, z right
+      local ok, err = force_camera("CameraObject", ride.obj, { x = v3(1, 0, 0), y = v3(0, 1, 0), z = v3(0, 0, 1),
+                                                               p = v3(e[1], e[3], e[2]) })
+      n.stage, n.at, n.how = "inside, local", t, "vehicle axes"
+      ride_event(ok and "native: asked for the seat (position in the vehicle's axes)" or ("native: seat failed: " .. err))
+    end
+  elseif n.stage == "inside, local" or n.stage == "inside, world" then
+    if t < n.at + SETTLE_S then return end
+    if at_seat() then
+      n.stage, n.next_report, n.seated = "inside", t + ride.report_s, t
+      ride_event("native: in the seat (" .. n.how .. "): " .. rel_text())
+    elseif n.stage == "inside, local" then
+      local x, y, z, h = vehicle_now()
+      ride_event("native: not at the seat with the vehicle's axes: " .. rel_text() .. "; trying the world position")
+      if x then
+        local look = ride.look_on
+        ride.look_on = false
+        local cam = camera_for(x, y, z, h)
+        ride.look_on = look
+        force_camera("CameraObject", ride.obj, cam)
+      end
+      n.stage, n.at, n.how = "inside, world", t, "world position"
+    else
+      n.stage = "outside only"
+      ride_event("native: not at the seat with the world position either: " .. rel_text()
+                 .. "; staying outside (DCS's camera, look around as usual)")
+      force_camera("CameraObject", ride.obj, nil)
+      n.next_report = t + ride.report_s
+    end
+  elseif t >= n.next_report then
+    n.next_report = t + ride.report_s
+    local f, u, r, d = cam_from_vehicle()
+    if n.stage == "inside" and f and not at_seat() and not n.left then
+      n.left = true   -- moved off the seat: the vehicle drove on without it, or the player moved it
+      ride_event("native: the camera left the seat: " .. rel_text())
+    end
+    if d and d > 200 and not n.away then
+      n.away = true
+      ride_event("native: the view is elsewhere now (" .. rel_text() .. ")")
+    end
+    ride_event("native, " .. n.stage .. ": " .. rel_text())
+  end
+end
+
+-- Every frame while riding: DCS's own camera if it has one for us, else the script places it.
+local function ride_tick()
+  if not ride then return end
+  if ride.want_native and not ride.native then
+    look_for_object()
+    if ride.obj then
+      native_start()
+    elseif now_s() - ride.started > 3 then
+      ride.want_native = false
+      ride_event("native: the vehicle isn't in this PC's world objects; placing the camera instead; " .. press_f4())
+    end
+    if ride.want_native then return end
+  end
+  if ride.native then
+    native_frame()
+    return
+  end
+  if ride.focus and ride.focus.stage ~= "placing" then
+    focus_frame()
+    return
+  end
+  ride_frame()
+end
+
+-- Run 29: in the view that follows a spectated aircraft DCS puts the camera back every frame; in
+-- F4 the camera stayed where it was put; and DCS crashed (access violation, from Lua) on F5 mid-ride.
+-- So the script only tries to place the camera once a second until it holds ("waiting"), then
+-- every frame ("holding"); the moment DCS moves it (the view changed) it lets go and makes no more
+-- camera calls this ride ("let go": -ride again to retry).
+local TRY_S = 1.0      -- while waiting, one try this often (ride_frame is declared above)
+local HOLD_M = 2.0     -- the camera read back this close to where it was put: it held
+local LET_GO_M = 25.0  -- holding, DCS moved it this far: the view changed (Run 29: it nudges it 3 to 4 m)
+ride_frame = function()
+  if not ride or ride.state == "let go" then return end
+  local set_fn, get_fn = export_fn("LoSetCameraPosition"), export_fn("LoGetCameraPosition")
+  if not (set_fn and get_fn) then
+    ride.state = "let go"
+    ride_event("let go: no LoSetCameraPosition/LoGetCameraPosition here")
+    return
+  end
+  -- Did the camera stay where we put it last frame?
+  if ride.put then
+    local ok, c = pcall(get_fn)
+    local d = math.huge
+    if ok and type(c) == "table" and type(c.p) == "table" then
+      d = math.sqrt((c.p.x - ride.put.x) ^ 2 + (c.p.y - ride.put.y) ^ 2 + (c.p.z - ride.put.z) ^ 2)
+    end
+    ride.put = nil
+    if d < HOLD_M then
+      ride.held = ride.held + 1
+      if type(c.x) == "table" and type(c.y) == "table" and type(c.z) == "table" then
+        ride.look = { x = c.x, y = c.y, z = c.z, h = ride.cam_h or 0 }
+      end
+      if ride.state == "waiting" then
+        ride.state = "holding"
+        ride_event(string.format("holding: the camera is in the Humvee (after %d tries, %.0f s)", ride.tries,
+          now_s() - ride.started))
+      end
+    else
+      ride.moved = ride.moved + 1
+      ride.last_off = d
+      if ride.state == "holding" and d >= LET_GO_M then
+        ride.state = "let go"
+        ride_event(string.format("let go: the view changed (camera %.0f m from where it was put) after %d frames held",
+          d, ride.held))
+        return
+      end
+    end
+  end
+  look_for_object()
+  local x, y, z, h, src = vehicle_now()
+  if not x then return end
+  ride.frames = ride.frames + 1
+  if src ~= ride.src then ride.src = src; ride_event("following from " .. src) end
+  if ride.state == "holding" or now_s() >= ride.next_try then
+    if ride.state == "waiting" then ride.next_try, ride.tries = now_s() + TRY_S, ride.tries + 1 end
+    local cam = camera_for(x, y, z, h)
+    local ok, err = pcall(set_fn, cam)
+    if ok then ride.put = cam.p else
+      ride.failed = ride.failed + 1
+      if not ride.err then ride.err = tostring(err); ride_event("LoSetCameraPosition failed: " .. ride.err) end
+    end
+  end
+  if now_s() >= ride.next_report then
+    ride.next_report = now_s() + ride.report_s
+    ride_event(string.format("%s, %s view, from %s: %d frames, %d tries, held %d, moved by DCS %d%s, set failed %d; at x %.0f z %.0f hdg %.0f",
+      ride.state, ride.view, src, ride.frames, ride.tries, ride.held, ride.moved,
+      ride.last_off and string.format(" (last %.0f m off)", ride.last_off) or "", ride.failed, x, z, math.deg(h) % 360))
+  end
+end
+
+function RPC.method.campaignRide(sender_id, spec)
+  if not from_server(sender_id) then return end
+  spec = type(spec) == "table" and spec or {}
+  local function nums(t, d)
+    local out = {}
+    for i = 1, #d do out[i] = tonumber(type(t) == "table" and t[i]) or d[i] end
+    return out
+  end
+  ride = { unit = tostring(spec.unit or ""), view = spec.view == "chase" and "chase" or "seat",
+           eye = nums(spec.eye, { 0.2, 0.45, 1.55 }), look_on = spec.look == true and spec.native == false,
+           want_look = spec.look ~= false, want_native = spec.native ~= false, chase = nums(spec.chase, { 12, 5 }),
+           report_s = tonumber(spec.report_s) or 2, started = now_s(), next_find = 0, next_report = now_s() + 1,
+           found = false,   -- not looked yet: the first look is always reported
+           state = "waiting", next_try = 0, tries = 0,
+           frames = 0, held = 0, moved = 0, failed = 0 }
+  auto_open, auto_pending = nil, false
+  pcall(close_map)
+  local cam = "n/a"
+  local get_fn = export_fn("LoGetCameraPosition")
+  if get_fn then
+    local ok, c = pcall(get_fn)
+    cam = ok and type(c) == "table" and type(c.p) == "table"
+          and string.format("x %.0f y %.0f z %.0f", c.p.x, c.p.y, c.p.z) or ("unreadable: " .. tostring(c))
+  end
+  ride_event(string.format("started, %s view; Export %s; object export %s, ownship export %s; camera request %s; camera was %s",
+    ride.view, type(Export), allowed("LoIsObjectExportAllowed"), allowed("LoIsOwnshipExportAllowed"),
+    (export_fn("LoForceCamera") and export_fn("LoCreateCameraRequest")) and "available" or "n/a", cam))
+  log_info("ride started: " .. ride.unit)
+end
+
+-- p = { x, y (the mission's: north, east), alt, hdg (degrees, true), spd (m/s) }
+function RPC.method.campaignRidePos(sender_id, p)
+  if not from_server(sender_id) or not ride or type(p) ~= "table" then return end
+  local x, z = tonumber(p.x), tonumber(p.y)
+  if not (x and z) then return end
+  ride.last = { x = x, z = z, alt = tonumber(p.alt) or 0, hdg = math.rad(tonumber(p.hdg) or 0),
+                spd = tonumber(p.spd) or 0, at = now_s() }
+end
+
+-- Move the seat camera during the ride (version 24: tuning it to the passenger figure's head):
+-- eye = { fwd, right, up } (metres). With DCS's camera on the vehicle, the camera is placed once more
+-- at the new seat (DCS keeps it there); while the script places it, it uses the new seat next frame.
+function RPC.method.campaignRideEye(sender_id, eye)
+  if not from_server(sender_id) or not ride or type(eye) ~= "table" then return end
+  for i = 1, 3 do ride.eye[i] = tonumber(eye[i]) or ride.eye[i] end
+  local f = ride.focus
+  if f and f.stage == "dcs" and ride.view == "seat" then
+    local set, cam = export_fn("LoSetCameraPosition"), seat_cam()
+    if set and cam then pcall(set, cam) end
+  end
+  ride_event(string.format("eye now %.2f forward, %.2f right, %.2f up", ride.eye[1], ride.eye[2], ride.eye[3]))
+end
+
+function RPC.method.campaignRideStop(sender_id, why)
+  if not from_server(sender_id) then return end
+  stop_ride(tostring(why or "server"))
+end
+
 local callbacks = {}
 
 function callbacks.onPlayerChangeSlot(id)
@@ -970,8 +1550,9 @@ end
 -- Opening the map by itself (AUTO_OPEN_MAP): when this player's side or slot changes to blue, the
 -- map opens once the slot screen has gone. Run 27: the host choosing blue got no
 -- onPlayerChangeSlot, only a coalition change, so both are watched here. The host's game is
--- paused while its slot screen is open, so unpaused means it's gone (a blue spectator too); a
--- client picks blue on its slot screen before an aircraft, so for a client it's an aircraft slot.
+-- paused while its slot screen is open, so unpaused means it's gone. Only for a blue spectator,
+-- never in a jet (Run 28: after Fly, the slot change opened it over the cockpit); getting into
+-- an aircraft also cancels an opening that's on its way.
 local slot_key, slot_armed, slot_check = nil, false, 0
 
 local function watch_slot()
@@ -984,7 +1565,9 @@ local function watch_slot()
   if key ~= slot_key then
     log_info("map: now side " .. key)
     slot_key = key
-    slot_armed = side == 2 and (Sim.isServer() or (slot ~= "" and slot ~= "0"))
+    local in_jet = slot ~= "" and slot ~= "0"
+    slot_armed = side == 2 and not in_jet
+    if in_jet then auto_open, auto_pending = nil, false end
   end
   if slot_armed then
     local paused = false
@@ -992,7 +1575,7 @@ local function watch_slot()
     if not paused then
       slot_armed = false
       auto_open = os.clock() + 1.0
-      log_info("map: opens in a moment (blue)")
+      log_info("map: opens in a moment (blue spectator)")
     end
   end
 end
@@ -1000,6 +1583,7 @@ end
 local function auto_open_map()
   if not auto_open or os.clock() < auto_open then return end
   auto_open = nil
+  if ride then return end   -- riding to the jet (P22): the camera is the show
   if map_window and map_window:getVisible() then return end
   if map_spec then
     toggle_map()
@@ -1019,6 +1603,13 @@ end
 
 function callbacks.onSimulationFrame()
   pcall(tick_flights)
+  if ride then
+    local ok, err = pcall(ride_tick)
+    if not ok then
+      ride_event("frame error: " .. tostring(err))
+      ride = nil
+    end
+  end
   if AUTO_OPEN_MAP then
     local ok, err = pcall(watch_slot)
     if not ok and slot_check >= 0 then
@@ -1033,6 +1624,7 @@ function callbacks.onSimulationFrame()
 end
 
 function callbacks.onSimulationStop()
+  ride = nil
   auto_open, auto_pending = nil, false
   slot_key, slot_armed, slot_check = nil, false, 0
   close_web()

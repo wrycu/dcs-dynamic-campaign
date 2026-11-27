@@ -471,7 +471,8 @@ class AirWar:
     def _tidy(self, now: float) -> None:
         st = self.state
         for f in list(st.flights.values()):
-            if f.state is FlightState.PLANNED and f.spawn is SpawnState.AGGREGATED and now > f.takeoff_time + CANCEL_LATE_S:
+            if (f.state is FlightState.PLANNED and f.spawn is SpawnState.AGGREGATED and not f.committed
+                    and now > f.takeoff_time + CANCEL_LATE_S):
                 log.info("AIR %s %s cancelled: never took off", f.callsign, f.mission)
                 self._drop(f)
             elif f.state in (FlightState.LANDED, FlightState.LOST) and f.spawn is SpawnState.AGGREGATED:

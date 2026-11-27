@@ -9,6 +9,11 @@ status_s = 60             # print a status line this often (real time)
 slot_sides = [0, 2]       # sides players may take: 0 spectators, 1 red, 2 blue (PvE: blue only)
 player_start = "hot"      # players' flights start on the ramp "hot" (engines running) or "cold"
 map_refresh_s = 30        # the war map (players with the client script) is redrawn this often
+# A flight lead's Commit builds the session mission from this template (it needs a player
+# aircraft to copy) into this folder, and loads it. "": a2a.miz and Missions/campaign-dev in
+# Saved Games.
+mission_template = ""
+missions_dir = ""
 
 [bubble]
 # Ordinary ground formations exist in DCS while a player is within these distances.

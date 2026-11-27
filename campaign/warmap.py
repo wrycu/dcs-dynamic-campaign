@@ -41,7 +41,8 @@ from .bubble import strength
 from .catalog import THREAT_RANGE_M, flight_cruise_ms, threat_range
 from .combat import SAM_LAUNCHERS, sam_class
 from .model import (CampaignState, Flight, FlightState, GroundOrder, GroundRole, GroundUnit, ObjectiveType, Pos,
-                    Side, Theater, Waypoint)
+                    Side, SpawnState, Theater, Waypoint)
+from .seats import FLY_OPEN_S, free_seats, seat_name, seat_of
 
 log = logging.getLogger("campaign")
 
@@ -126,11 +127,6 @@ def few(n: int) -> str:
         lo = n - (n + 1) % 2   # 1-2, 3-4, 5-6
         return f"{lo} or {lo + 1}"
     return about(n)
-
-
-def seat_of(f: Flight, ucid: str) -> int | None:
-    """The player's seat in the flight (1-based), or None."""
-    return next((seat for seat, who in sorted(f.player_seats.items()) if who == ucid), None)
 
 
 def t_minus(dt: float) -> str:
@@ -491,6 +487,7 @@ class Picture:
         self.flight_buttons: list[dict[str, Any]] = []
         self.packages: dict[str, str] = {}      # selectable flight's group -> its package
         self.joins: dict[str, dict[str, Any]] = {}   # selectable flight's group -> its join button
+        self.actions: dict[str, dict[str, Any]] = {}  # ... -> its commit or fly button (seated players)
 
     # ----- helpers -----
 
@@ -586,7 +583,7 @@ class Picture:
         self.objects = [o for o in self.objects if o.get("groups") != [] or o.get("detail")]
         spec = {"title": self.title, "mode": "map", "panel": self._panel(seen, flights),
                 "objects": self.objects, "detail_scale": round(DETAIL_SCALE_M), "flights": self.flight_buttons,
-                "packages": self.packages, "joins": self.joins,
+                "packages": self.packages, "joins": self.joins, "actions": self.actions,
                 "flights_none": f"none in the next {PANEL_AHEAD_S // 3600} h"}
         c = center or self._centre()
         if c is not None:
@@ -770,6 +767,7 @@ class Picture:
         infos: dict[str, str] = {}
         self.packages = {f"f:{f.id}": f.package_id for f in ours if f.id in selectable}
         self.joins = {f"f:{f.id}": j for f in ours if f.id in selectable and (j := self.join_button(f))}
+        self.actions = {f"f:{f.id}": a for f in ours if f.id in selectable and (a := self.action_button(f))}
         for f in ours:
             sq = st.squadrons[f.squadron_id]
             pkg = st.packages.get(f.package_id)
@@ -869,10 +867,15 @@ class Picture:
             lines.append(f"{f.state.name.lower().replace('_', ' ')}{alt}{hdg}")
         if f.player_preferred:
             taken = {seat: who for seat, who in f.player_seats.items() if who}
-            lines.append(f"Player flight: {len(taken)} of {f.aircraft} seats taken")
+            lines.append(f"Player flight: {len(taken)} of {f.aircraft} seats taken"
+                         + (", committed" if f.committed else ""))
             for seat in sorted(taken):
                 who = taken[seat]
-                lines.append(f"  {f.callsign}-{seat}: " + ("you" if who == self.me else self.pilots.get(who, "a player")))
+                lines.append(f"  {seat_name(f, seat)}: " + ("you" if who == self.me else self.pilots.get(who, "a player")))
+            if f.committed:
+                ai = [seat_name(f, s_) for s_ in range(1, f.aircraft + 1) if s_ not in f.slots]
+                if ai:
+                    lines.append(f"  AI: {', '.join(ai)}")
         return "\n".join(lines)
 
     def join_button(self, f: Flight) -> dict[str, Any] | None:
@@ -885,10 +888,36 @@ class Picture:
             return {"label": f"Leave {f.callsign} (you're {f.callsign}-{seat})", "key": f"leave:{gid}", "ok": True}
         if f.state is not FlightState.PLANNED:
             return {"label": f"{f.callsign} has taken off", "key": "", "ok": False}
-        free = f.aircraft - sum(1 for v in f.player_seats.values() if v)
+        free = len(free_seats(f))
         if free <= 0:
             return {"label": f"{f.callsign} is full", "key": "", "ok": False}
         return {"label": f"Join {f.callsign} ({free} of {f.aircraft} seats free)", "key": f"join:{gid}", "ok": True}
+
+    def action_button(self, f: Flight) -> dict[str, Any] | None:
+        """The second button, for a player seated in the selected flight: Commit (its lead, once
+        everyone's in: builds the session mission) or, once committed, Fly (from FLY_OPEN_S before
+        take-off: into the seat's jet). {label, key, ok}; Fly before it opens also has opens_in
+        (seconds, counted down by the client) and ready (the label once open)."""
+        seat = seat_of(f, self.me) if f.player_preferred else None
+        if seat is None:
+            return None
+        gid = f"f:{f.id}"
+        me = seat_name(f, seat)
+        if f.state not in (FlightState.PLANNED, FlightState.TAXI):
+            return {"label": f"{f.callsign} has taken off", "key": "", "ok": False}
+        if not f.committed:
+            if f.state is not FlightState.PLANNED:
+                return None
+            if seat == 1:
+                return {"label": f"Commit {f.callsign} (restarts the mission)", "key": f"commit:{gid}", "ok": True}
+            return {"label": f"Waiting for {seat_name(f, 1)} to commit", "key": "", "ok": False}
+        if seat not in f.slots:
+            return {"label": f"{me} has no jet in this mission", "key": "", "ok": False}
+        opens = f.takeoff_time - FLY_OPEN_S - self.st.clock
+        if opens > 0:
+            return {"label": f"Fly {me} from {hhmm(f.takeoff_time - FLY_OPEN_S + self.off)}", "key": f"fly:{gid}",
+                    "ok": False, "opens_in": round(opens), "ready": f"Fly {me}"}
+        return {"label": f"Fly {me}", "key": f"fly:{gid}", "ok": True}
 
     def _panel(self, seen: int, coming: list[Flight]) -> list[str]:
         st = self.st
@@ -953,6 +982,8 @@ class WarMap:
         self.weather = ""
         self.ucids: dict[int, str] = {}     # player id -> ucid (player_connect, clicks)
         self.pilots: dict[str, str] = {}    # ucid -> name
+        # Commit and Fly (campaign/session.py); set by the server. Without it they answer "not here".
+        self.session: Any = None
 
     def set_mission(self, info: dict[str, Any], clock_now: float) -> None:
         """The loaded mission's time and weather (the mission bridge's ``query mission``), on each
@@ -1023,7 +1054,7 @@ class WarMap:
         if kind == "player_disconnect":
             self.viewers.pop(pid, None)
             return False
-        if kind == "client_click" and str(data.get("key", "")).startswith(("join:", "leave:")):
+        if kind == "client_click" and str(data.get("key", "")).startswith(("join:", "leave:", "commit:", "fly:")):
             if data.get("ucid"):
                 self.ucids[pid] = str(data["ucid"])
                 if data.get("name"):
@@ -1051,7 +1082,8 @@ class WarMap:
 
     def join(self, player_id: int, what: str, flight_id: str) -> str:
         """A player takes a seat in a player flight ("join") or gives it up ("leave"). Returns the
-        reply. Getting into the jet isn't built yet: this only gives them the seat (Flight.player_seats)."""
+        reply. The seat is theirs (Flight.player_seats); its lead's Commit and their own Fly get
+        them into the jet (campaign/session.py). Once committed, only its Client seats can be joined."""
         ucid = self.ucids.get(player_id)
         f = self.st.flights.get(flight_id)
         sq = self.st.squadrons.get(f.squadron_id) if f else None
@@ -1063,6 +1095,8 @@ class WarMap:
             seat = seat_of(f, ucid)
             if seat is None:
                 return f"You aren't in {f.callsign}"
+            if f.spawn is SpawnState.SPAWNED and f.committed:
+                return f"{f.callsign} is in DCS: leave your jet instead"
             f.player_seats[seat] = None
             log.info("MAP player %s (%s) leaves %s-%d", player_id, self.pilots.get(ucid, ucid), f.callsign, seat)
             return f"You've left {f.callsign}"
@@ -1070,9 +1104,9 @@ class WarMap:
             return f"You're already {f.callsign}-{seat_of(f, ucid)}"
         if f.state is not FlightState.PLANNED:
             return f"{f.callsign} has taken off"
-        free = [n for n in range(1, f.aircraft + 1) if not f.player_seats.get(n)]
+        free = free_seats(f)
         if not free:
-            return f"{f.callsign} is full"
+            return f"{f.callsign} is full" + (" (committed: its other seats are AI)" if f.committed else "")
         left = []
         for other in self.st.flights.values():   # one flight at a time
             s_ = seat_of(other, ucid)
@@ -1082,13 +1116,31 @@ class WarMap:
         f.player_seats[free[0]] = ucid
         log.info("MAP player %s (%s) joins %s-%d%s", player_id, self.pilots.get(ucid, ucid), f.callsign, free[0],
                  f" (left {', '.join(left)})" if left else "")
-        return (f"You're {f.callsign}-{free[0]}: {f.mission}, take-off {hhmm(f.takeoff_time + self.tod_offset)} "
+        if f.committed:
+            nxt = f"Fly opens at {hhmm(f.takeoff_time - FLY_OPEN_S + self.tod_offset)}"
+        elif free[0] == 1:
+            nxt = "You lead it: press Commit once everyone's in (it restarts the mission with your jets)"
+        else:
+            nxt = f"{seat_name(f, 1)} commits once everyone's in"
+        return (f"You're {seat_name(f, free[0])}: {f.mission}, take-off {hhmm(f.takeoff_time + self.tod_offset)} "
                 f"({t_minus(f.takeoff_time - self.st.clock)})" + (f". You've left {', '.join(left)}" if left else "") +
-                ". Getting into the jet from the map isn't built yet: the seat is marked yours")
+                f". {nxt}")
 
     async def _join(self, player_id: int, what: str, flight_id: str) -> None:
-        await self.reply(player_id, self.join(player_id, what, flight_id))
-        await self.send(player_id, show=True, keep_view=True)   # the button and the seats as they are now
+        if what in ("commit", "fly"):
+            if self.session is None:
+                text = "Getting into the jet isn't available on this server"
+            elif what == "commit":
+                text = self.session.commit(player_id, self.ucids.get(player_id), flight_id)
+            else:
+                text = await self.session.fly(player_id, self.ucids.get(player_id), flight_id)
+        else:
+            text = self.join(player_id, what, flight_id)
+            if self.session is not None:
+                await self.session.seats_changed()
+        await self.reply(player_id, text)
+        # The buttons and seats as they are now; not opened over the cockpit after Fly.
+        await self.send(player_id, show=what != "fly", keep_view=True)
 
     async def _safe(self, coro: Awaitable[Any]) -> None:
         try:

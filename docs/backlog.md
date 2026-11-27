@@ -41,10 +41,42 @@ Southern Syria (first DCS run is Run 24). Players can't claim flights yet. Neede
   it matters.
 - **Choosing a flight.** Players see the flights their side has planned and pick one to fly,
   BMS-style: by mission, target, takeoff time and base. Started (after Run 27): the war map's join
-  button gives the player a seat in the selected flight (`Flight.player_seats`); still to do: put
-  them in the jet from there, hold the flight for them, and what a seat means to the planner. The flight is held for them; if nobody
+  button gives the player a seat in the selected flight (`Flight.player_seats`). Then (client
+  version 15, Run 28): the lead's Commit builds and loads the session mission with the flight's
+  Client group, the AI waits for them, Fly puts each player in their jet, and the AI takes it if
+  nobody comes ([planner](planner.md) section 5, "As built"). The flight is held for them; if nobody
   takes it before its deadline, the AI flies it or it is cancelled (`Flight.player_preferred`
   is already in the model).
+- **Getting to the jet (proof P22, Run 29).** Instead of Fly putting the player straight in the
+  cockpit, they start at a "briefing room" spot at the base and ride to their jet: the server
+  drives an AI Humvee there and the client script keeps the player's camera in its passenger
+  seat (`Export.LoSetCameraPosition`), then the server slots them in. Walking can't do it (the
+  server can't see a player on foot, Run 14), and driving it yourself needs Combined Arms (Run
+  14h). `tools.ride_probe` (client version 24) tries the pieces; the campaign uses it only once
+  that works. Run 29: the camera can be placed only in some views (F4 yes; not the view following
+  an aircraft), and F5 mid-ride crashed DCS, so players would press F4 or F11 for the ride.
+  Second try: the ride to the jet and the hand-off into the cockpit worked with F4; looking
+  around during the ride by keeping DCS's view direction drifted (version 19); version 20 asks
+  DCS for its own object camera on the Humvee instead (`LoForceCamera`, if this DCS has it).
+  Fourth try: that request isn't enabled (`LoCreateCameraRequest` gives nil); the script presses
+  F4 itself, and the chase view (behind the Humvee) held all the way to the jet. Wanted: the
+  inside view (the passenger seat), chase only as a fallback. Version 22 presses F7 to make the
+  Humvee the watched object, then F4, so DCS's own camera can sit in the seat.
+  Fifth try: that works: F7 found the Humvee, and DCS kept the camera in the seat by itself to
+  the jet, looking around included. Version 23 levels the seat view on slopes. Sixth try: level;
+  the camera sits in the Humvee's passenger figure. Version 24 tunes the seat live and tries
+  other vehicles (`-car`). For the campaign
+  version (asked 2026-11-27):
+  1. Several drops: one ride for a flight, dropping each player at their jet in turn.
+  2. The jets visible as the Humvee drives up: a Client jet isn't in the world until its player
+     takes the slot, so something has to stand in for it (a static of the type, removed as the
+     player gets in, or the slot's own AI until then).
+  3. The Humvee drives off after the last drop (and is removed out of sight).
+  4. It follows the base's roads and taxiways instead of driving straight across the ground: a
+     route from the airbase's road network (the Hooks' roadnet, as `stands` reads) or DCS's own
+     "On Road" driving, if the base's roads connect.
+  5. It starts somewhere sensible: by the base's buildings (a briefing-room point per base), not
+     a random parking spot.
 - **Where to join.** Join a flight on the ramp before takeoff, or one that is already airborne.
   To decide: joining in the air needs a spawn at the flight's position, i.e. a player slot that
   exists there; with one .miz and no client mods, the realistic options are fixed slots per

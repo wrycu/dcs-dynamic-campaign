@@ -179,6 +179,15 @@ Without this part the AI's sorties change nothing, and the war still stalls.
 - **Flights planned after the rebuild** have no slots until the next one. So at each rebuild the
   planner fixes blue's player-flyable flights for the whole session; the hourly cycle still adds
   AI-only flights and red's.
+- **As built (2026-11-27, `campaign/session.py`; see "The war map" in [server](server.md)):** the
+  players choose on the war map, not an F10 list. The rebuild comes when a flight's lead presses
+  **Commit** once everyone has joined (asked 2026-11-27), not at a fixed session start: the mission
+  then has a Client group for every committed flight still on the ground. Because the seats are
+  known then, a seat nobody took is an AI unit in the same group (the native wingman Run 25 showed
+  working), not a separate parked group. **Fly** opens 20 min before take-off. Nobody in by 10 min
+  after take-off: the AI flies it. A commit is refused while any player is in a jet. Not yet: the
+  briefing message, kneeboard pages, warehouse stock from the squadrons (the slots' airbases get
+  unlimited aircraft), and confirming in DCS that a Client unit takes the parking stand it's given.
 - **Not in this step:** joining a flight already airborne (needs air-start slots in the .miz,
   P2), editing the plan (item 26), building your own package (item 27).
 

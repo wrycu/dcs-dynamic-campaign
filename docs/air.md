@@ -42,6 +42,12 @@ PLANNED --spawn--> TAXI --takeoff--> ENROUTE --all landed--> LANDED --all shut d
   - Airborne flights become aggregated and resume in the air.
   - Flights that never took off go back to PLANNED, with their aircraft returned.
 - **Orphans:** unknown `fl:` groups in DCS are removed.
+- **Players' flights** (`AirSpawner.adopt`): a committed flight's Client group in the session mission
+  (`Uzi 4 BAI`, units `Uzi 4-1`...; [server](server.md), "Into the jet") becomes the flight when its
+  first unit is born, and is followed by those names. It has no taxi watchdog, is never taken out
+  of DCS and never despawned: landed and shut down, it's recovered and left for the players.
+  Players leaving it on the ground give it back to the base (still committed, waiting for them);
+  leaving it in the air counts as coming home. Until someone gets in, the bubble doesn't launch it.
 
 ## Verified in DCS (2.9, Run 5, FA-18C and MiG-29A)
 - Air starts fly their route and fight. Blue and red CAPs engaged each other, and losses were counted.

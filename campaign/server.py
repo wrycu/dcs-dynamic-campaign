@@ -33,7 +33,7 @@ import os
 import signal
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .air import AirSpawner
 from .air_bubble import AIRBORNE, MAX_STEP_S, AirBubble
@@ -45,6 +45,7 @@ from .parking import FIGHTER_SPOTS, Size, Stand, size_from, stands_from, usable_
 from .model import CampaignState, Flight, FlightState, GroundRole, GroundUnit, Pos, SpawnState, Squadron, Theater
 from .persist import Autosave, SaveError, Snapshot, load
 from .protocol import Envelope, Hello, Src, as_list
+from .session import Session
 from .settings import Settings, SettingsError, load_settings
 from .spawner import GroundSpawner
 from .warmap import WarMap
@@ -183,6 +184,10 @@ class Engine:
         self.warmap = WarMap(self.state, scenario.theater, self.hooks_call, magvar=scenario.magvar,
                              title=scenario.title or scenario.name, side_names=dict(scenario.side_names),
                              refresh_s=settings.server.map_refresh_s) if scenario.theater else None
+        # Players into their jets (Commit and Fly on the war map): the session mission.
+        self.session = Session(self) if self.warmap is not None else None
+        if self.warmap is not None:
+            self.warmap.session = self.session
 
     def news(self, text: str) -> None:
         """War news (battles, captures): on the war map's panel."""
@@ -278,15 +283,18 @@ class Engine:
                 return None
         return self._sizes[aircraft_type]
 
-    async def takeoff_for(self, f: Flight) -> Takeoff:
+    async def takeoff_for(self, f: Flight, skip: Iterable[int] = ()) -> Takeoff:
+        """Where ``f`` starts: its airbase and a free parking spot per aircraft that it fits (``skip``:
+        spots already given to another flight)."""
         sq = self.state.squadrons[f.squadron_id]
         name = self.dcs_airbase(sq.base_id)
         ab = self.airbases.get(name)
         if ab is None:
             raise ValueError(f"no airbase {name!r} in DCS")
         res = await self.mission_call("query", {"what": "parking", "airbase": name, "free_only": True})
-        spots = usable_spots(as_list(res.get("spots")), await self.stands_at(int(ab["id"])),
-                             await self.type_size(sq.aircraft_type))
+        skip = set(skip)
+        spots = usable_spots([s for s in as_list(res.get("spots")) if s.get("term") not in skip],
+                             await self.stands_at(int(ab["id"])), await self.type_size(sq.aircraft_type))
         spots.sort(key=lambda s: (FIGHTER_SPOTS.index(s["type"]), s.get("dist_rw") or 0))
         if len(spots) < f.aircraft:
             raise ValueError(f"only {len(spots)} free parking spots at {name} that {sq.aircraft_type} fits")
@@ -301,6 +309,10 @@ class Engine:
         if conn.src == Src.MISSION:
             await self.mission_connected(hello, new_run)
         elif conn.src == Src.HOOKS:
+            if self.session is not None:   # the sides, and the committed flights' seats
+                self.session._rules_sent = None
+                await self.session.push_rules()
+                return
             try:
                 await self.hooks_call("slot_rules", {"allowed_sides": self.settings.server.slot_sides})
             except (BridgeError, asyncio.TimeoutError) as e:
@@ -330,6 +342,8 @@ class Engine:
                         self.warmap.set_mission(info, self.state.clock)
                 except (BridgeError, asyncio.TimeoutError) as e:
                     log.warning("MAP no mission time and weather: %s", e)
+            if self.session is not None:
+                await self.session.on_mission()
             if self.ghosts:
                 for line in self.ghosts.place(self.airbase_pos, self.scenario.home, self.scenario.magvar):
                     log.info(line)
@@ -371,6 +385,8 @@ class Engine:
             log.info("EVENT %s %s (%s)%s", kind, u.get("name"), u.get("type"),
                      f" player {u['player']}" if u.get("player") else "")
         self.ground.on_event(data)
+        if self.session is not None:
+            self.session.on_event(data)   # a players' jet born: the flight is in DCS
         self.air.on_event(data)
         self.air_bubble.on_event(data)
         for s in self.systems:
@@ -384,6 +400,8 @@ class Engine:
         if kind in ("player_connect", "player_disconnect", "player_slot", "slot_denied"):
             log.info("PLAYER %s %s side=%s slot=%s%s", kind, data.get("name") or data.get("player_id"),
                      data.get("side"), data.get("slot"), f" ({data['reason']})" if data.get("reason") else "")
+        if self.session is not None:
+            self.session.on_player(data)
         if self.warmap is not None:
             self.warmap.on_player(data, self.background)
 
@@ -403,6 +421,8 @@ class Engine:
             # 4: planning
             for s in self.systems:
                 await self._guard(s.tick(), s.name)
+            if self.session is not None:   # the players' deadline, and their seats' rules
+                await self._guard(self.session.tick(), "session")
             # 5: bubbles
             exits, self.exits = list(self.exits.values()), {}
             await self._guard(self.air.tick(exits), "air")

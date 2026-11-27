@@ -82,6 +82,11 @@ class ServerConfig:
     slot_sides: list[int] = field(default_factory=lambda: [0, 2])   # spectators and blue (PvE)
     player_start: str = "hot"       # players' flights start on the ramp "hot" (engines running) or "cold"
     map_refresh_s: float = 30.0     # real seconds between war map refreshes (players with the client script)
+    # The session mission (campaign/session.py), built when a flight lead commits: from this
+    # template .miz (it needs a player aircraft to copy), written to this folder (where DCS loads it
+    # from). "": the test missions' a2a.miz, and Saved Games/DCS/Missions/campaign-dev.
+    mission_template: str = ""
+    missions_dir: str = ""
 
     def __post_init__(self) -> None:
         if not 0 < self.port < 65536:
@@ -98,7 +103,7 @@ class ServerConfig:
 
 SERVER_TYPES: dict[str, type | tuple[type, ...]] = {
     "host": str, "port": int, "save": str, "autosave_s": (int, float), "status_s": (int, float), "slot_sides": list,
-    "player_start": str, "map_refresh_s": (int, float),
+    "player_start": str, "map_refresh_s": (int, float), "mission_template": str, "missions_dir": str,
 }
 
 

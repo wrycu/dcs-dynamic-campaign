@@ -399,6 +399,9 @@ local event_map = {
     local d = describe(e.initiator)
     if d then reset_life(d.name) end
     if d and d.category == "unit" then emit("birth", { unit = d, place = place_name(e) }) end
+    -- A player's group (a Client group built into the session mission for a campaign flight) is
+    -- followed in telemetry from its first birth, as if spawned here.
+    if d and d.category == "unit" and d.player and d.group then B.spawned[d.group] = true end
   end,
   [E.S_EVENT_TAKEOFF] = function(e) emit("takeoff", { unit = describe(e.initiator), place = place_name(e) }) end,
   [E.S_EVENT_LAND] = function(e) emit("land", { unit = describe(e.initiator), place = place_name(e) }) end,
@@ -800,7 +803,29 @@ function commands.query(d)
     local desc = Unit.getDescByName(d.type)
     if not desc or not desc.box then error("no description for type " .. tostring(d.type)) end
     local b = desc.box
-    return { span = b.max.z - b.min.z, length = b.max.x - b.min.x, height = b.max.y - b.min.y }
+    return { span = b.max.z - b.min.z, length = b.max.x - b.min.x, height = b.max.y - b.min.y,
+             fuel_max = desc.fuelMassMax }
+  elseif d.what == "client_groups" then
+    -- The mission's groups with player (Client) seats, as built into the .miz: the campaign's
+    -- session mission has one per committed flight. Slot ids are the units' unitIds; x, y and heading
+    -- (radians) are where each is parked in the .miz.
+    local out = {}
+    for _, side in pairs((env.mission or {}).coalition or {}) do
+      for _, c in pairs(side.country or {}) do
+        for _, cat in ipairs({ "plane", "helicopter" }) do
+          for _, g in pairs((c[cat] or {}).group or {}) do
+            local units, clients = {}, false
+            for _, u in pairs(g.units or {}) do
+              units[#units + 1] = { name = u.name, id = tostring(u.unitId), skill = u.skill, type = u.type,
+                                    x = u.x, y = u.y, heading = u.heading }
+              if u.skill == "Client" then clients = true end
+            end
+            if clients then out[#out + 1] = { name = g.name, units = units } end
+          end
+        end
+      end
+    end
+    return { groups = out }
   elseif d.what == "warehouse" then
     -- Aircraft stock at an airbase, for the given types.
     local ab = Airbase.getByName(d.airbase)

@@ -189,6 +189,11 @@ class Flight:
     # DCS flight number (1-89): its callsign and board numbers (campaign.flight_spawn.unit_identity),
     # given when it's planned, so the plan, the map and its units in DCS all say "Uzi 4". 0: none yet.
     number: int = 0
+    # Committed by its lead (campaign/session.py): the session mission has its Client group, and
+    # the AI doesn't fly it unless nobody gets in by the deadline.
+    committed: bool = False
+    client_group: str | None = None    # the DCS group name of its Client group in the session mission
+    slots: dict[int, str] = field(default_factory=dict)   # player seat -> DCS slot id (Client units only)
 
 
 @dataclass
@@ -312,3 +317,7 @@ class CampaignState:
     atos: dict[Side, ATO] = field(default_factory=dict)
     pilots: dict[str, Pilot] = field(default_factory=dict)
     event_log: list[Event] = field(default_factory=list)
+    # The session mission the server last built for committed flights (campaign/session.py), and
+    # how many it has built (they alternate between two file names).
+    session_mission: str | None = None
+    session_builds: int = 0

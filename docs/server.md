@@ -86,7 +86,7 @@ bearing and range from the player to each. Use `build/campaign-smoke.miz`;
 
 ## The war map
 
-Players with the opt-in client script (`lua/client/campaign_client.lua`, version 14) get the war
+Players with the opt-in client script (`lua/client/campaign_client.lua`, version 16) get the war
 in a full-screen native DCS window with the Mission Editor's map (proof P21), built by `campaign/warmap.py`
 for scenarios with a map layer (`southern_syria`). On loading in, a player's script says hello
 and the server sends the map hidden: **Ctrl+Shift+F8** shows or hides it; `-map` in chat sends it
@@ -130,16 +130,37 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
   mission connect), objectives held, battles, the latest war news, and the **Upcoming flights**
   buttons. A scale bar on the map's bottom-left corner (a round distance in nm) follows the zoom. All the map's times are times
   of day. No summary of threats: the map shows them.
-- **Joining a flight** (a first step): with a player flight selected, a button under the list says
+- **Joining a flight:** with a player flight selected, a button under the list says
   `Join Uzi 4 (2 of 2 seats free)`, `Leave Uzi 4 (you're Uzi 4-1)`, or why not (full, taken off).
   Joining gives the player the first free seat (`Flight.player_seats`, saved; one flight at a time:
   joining another leaves the first), answers in chat and sends the map again. The flight's details
-  list who has which seat; its button shows `1/2 seats`. Nothing more yet: it doesn't put the
-  player in the jet, and the seat doesn't hold the flight for them (backlog item 2). Players are
-  known by ucid, learnt from `player_connect` and from the click itself.
-- **Opens by itself** when the player goes blue, about a second after the slot screen has gone
-  (or as soon as the first map arrives): for the host, on choosing blue (a slot or blue's
-  spectators) and closing the slot screen; for a client, on taking a blue aircraft slot.
+  list who has which seat; its button shows `1/2 seats`. Players are known by ucid, learnt from
+  `player_connect` and from the click itself.
+- **Into the jet** (`campaign/session.py`): a second button, for players seated in the flight.
+  - **Commit** (the lead, seat 1, once everyone is in): the server builds the *session mission*
+    and has the Hooks load it 15 s later, so everyone goes back to the slot screen. It has a
+    Client group for every committed flight still on the ground (`Uzi 4 BAI`, units `Uzi 4-1`...):
+    the players' seats are Client slots, the others AI in the same group. Each group has the
+    flight's type, loadout, fuel, route, callsigns, parking (stands it fits) and, for a Hornet,
+    each player's cartridge (it loads itself). The mission starts at the campaign's time now; the
+    template's own player slots are left out. Built from `mission_template` into `missions_dir`
+    as `campaign-session-a.miz` / `-b.miz` in turn. Refused while any player is in a jet (the
+    reload would take it away). Once committed, only its Client seats can be joined.
+  - **Fly** (`Fly Uzi 4-1 from 08:00`, greyed out until 20 min before take-off): the server moves
+    the player into their slot (`force_player_slot`; they must be blue, spectators are fine) and
+    the client script puts them in the cockpit, closing the map. Without the client script, take
+    the slot from the slot list: the Hooks refuse a seat before it opens and a seat held for
+    someone else; a free seat is anyone's, and taking it makes it theirs.
+  - **In the jet:** the Client group is the flight from its first birth: take-off, landing and
+    losses count as for any flight. It's never despawned while players are in it; landed and shut
+    down, it's recovered and the players leave when they like. Players leaving on the ground give
+    the jets back (the flight waits for them again); leaving in the air counts as coming home.
+  - **Deadline:** nobody in by 10 min after take-off, or a loaded mission without the flight's
+    group: it goes to the AI (its slots close, its seats empty) and flies as any other flight.
+- **Opens by itself** when the player becomes a blue spectator, about a second after the slot
+  screen has gone (or as soon as the first map arrives); for the host, once the slot screen is
+  closed (its game is paused until then). Never in a jet (version 16, after Run 28: Fly's move into
+  the cockpit opened it there), and getting into one cancels an opening on its way.
   `AUTO_OPEN_MAP` in the client script.
 
 ## Settings
@@ -154,6 +175,8 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
 | `status_s` | `60` | Real seconds between console status lines. |
 | `slot_sides` | `[0, 2]` | Sides players may take: 0 spectators, 1 red, 2 blue. |
 | `map_refresh_s` | `30` | Real seconds between war map refreshes (at least 5). |
+| `mission_template` | `""` | The .miz the session mission is built from (it needs a player aircraft to copy). `""`: `a2a.miz` in Saved Games' Missions, as the test missions. |
+| `missions_dir` | `""` | Where the session mission is written; must be under Saved Games' Missions, where the Hooks load it from. `""`: `Missions/campaign-dev`. |
 
 `[bubble]` is in [bubble](bubble.md). Unknown keys and sections are an error.
 
