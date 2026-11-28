@@ -87,6 +87,10 @@ class ServerConfig:
     # from). "": the test missions' a2a.miz, and Saved Games/DCS/Missions/campaign-dev.
     mission_template: str = ""
     missions_dir: str = ""
+    # Fly as a ride in a Humvee to the jets (campaign/rides.py), for players whose client script has
+    # it (version 24); at this speed.
+    ride_to_jet: bool = True
+    ride_kmh: float = 20.0
 
     def __post_init__(self) -> None:
         if not 0 < self.port < 65536:
@@ -97,6 +101,8 @@ class ServerConfig:
             raise ValueError("map_refresh_s must be at least 5")
         if not self.slot_sides or any(s not in (0, 1, 2) for s in self.slot_sides):
             raise ValueError("slot_sides must list sides 0 (spectators), 1 (red) or 2 (blue)")
+        if not 5 <= self.ride_kmh <= 80:
+            raise ValueError("ride_kmh must be 5-80")
         if self.player_start not in PLAYER_STARTS:
             raise ValueError(f"player_start must be one of {', '.join(PLAYER_STARTS)}")
 
@@ -104,6 +110,7 @@ class ServerConfig:
 SERVER_TYPES: dict[str, type | tuple[type, ...]] = {
     "host": str, "port": int, "save": str, "autosave_s": (int, float), "status_s": (int, float), "slot_sides": list,
     "player_start": str, "map_refresh_s": (int, float), "mission_template": str, "missions_dir": str,
+    "ride_to_jet": bool, "ride_kmh": (int, float),
 }
 
 
@@ -114,7 +121,8 @@ def server_config(section: dict[str, Any], base: ServerConfig | None = None) -> 
         raise SettingsError(f"unknown [server] settings: {', '.join(sorted(unknown))}; "
                             f"known: {', '.join(SERVER_TYPES)}")
     for key, value in section.items():
-        if isinstance(value, bool) or not isinstance(value, SERVER_TYPES[key]):
+        want = SERVER_TYPES[key]
+        if (isinstance(value, bool) and want is not bool) or not isinstance(value, want):
             raise SettingsError(f"[server] {key} has the wrong type: {value!r}")
     try:
         return replace(base or ServerConfig(), **section)

@@ -13,7 +13,8 @@
    slot (``force_player_slot``; they must be blue) and the client script puts them in the
    cockpit. Without the script: take the slot from the slot list. The Hooks keep a held seat for
    its owner and refuse a seat that isn't open yet; a free seat is anyone's, and whoever takes it
-   has it.
+   has it. With the client script (version 24 or later) and ``[server] ride_to_jet``, Fly is a
+   ride in a Humvee to the flight's jets instead, dropping each player at theirs (campaign/rides.py).
 4. **In the jet:** the Client group is the flight once its first unit is born (``AirSpawner.adopt``);
    the war follows it like any flight in DCS.
 5. **Deadline:** nobody in the jets ``LATE_S`` after take-off, or the loaded mission doesn't have
@@ -35,6 +36,7 @@ from .dtc import DtcWaypoint, hornet_dtc
 from .flight_spawn import Takeoff, build_flight_spawn
 from .model import Flight, FlightState, Side, SpawnState, StartMode
 from .protocol import as_list
+from .rides import Rides
 from .seats import FLY_OPEN_S, LATE_S, group_label, seat_name, seat_of
 
 if TYPE_CHECKING:
@@ -113,6 +115,7 @@ class Session:
         self.building = False
         self.closed: dict[str, str] = {}     # slot id -> why it's closed (its flight went to the AI)
         self._rules_sent: Any = None
+        self.rides = Rides(engine)
 
     @property
     def st(self):
@@ -241,6 +244,13 @@ class Session:
             return f"{f.callsign} has taken off"
         if self.st.clock < f.takeoff_time - FLY_OPEN_S:
             return f"Fly opens at {self.tod(f.takeoff_time - FLY_OPEN_S)}, {FLY_OPEN_S // 60} min before take-off"
+        if self.rides.can_ride(player_id):
+            text = self.rides.board(player_id, ucid, f, seat)
+            if text is not None:
+                self.rides.boarded.add((f.id, ucid or ""))
+                log.info("SESSION player %s (%s) rides to %s", player_id, self.pilot(ucid), me)
+                return text
+        await self.rides.getting_in(f, seat)
         res = await self.e.hooks_call("force_slot", {"player_id": player_id, "side": 2, "slot": slot})
         if not (isinstance(res, dict) and res.get("ok")):
             return f"DCS didn't move you into {me}: pick blue in the slot list first (spectators are fine), or take {me} there"
@@ -273,12 +283,17 @@ class Session:
             f.slots = {s: ids[seat_name(f, s)] for s in range(1, f.aircraft + 1) if seat_name(f, s) in ids}
             log.info("SESSION %s has its jets: %s", f.callsign,
                      ", ".join(f"{seat_name(f, s)} slot {i}" for s, i in sorted(f.slots.items())) or "no Client seats")
+        try:
+            await self.rides.on_mission(groups, [f for f in self.committed() if f.slots])
+        except Exception as e:  # noqa: BLE001 - stand-ins and rides are extras: Fly still works without them
+            log.warning("RIDE setup failed: %s", e)
         await self.push_rules()
 
     def release(self, f: Flight, why: str) -> None:
         """The flight goes to the AI: its slots close, its seats empty."""
         for sid in f.slots.values():
             self.closed[sid] = f"{f.callsign} has gone to the AI"
+        self.rides.done_with(f)
         f.committed, f.slots, f.client_group = False, {}, None
         f.player_seats = {}
         log.info("SESSION %s goes to the AI: %s", f.id, why)
@@ -326,6 +341,7 @@ class Session:
 
     def on_player(self, data: dict[str, Any]) -> None:
         """A player took a campaign slot from the slot list: a free seat is theirs now."""
+        self.rides.on_player(data, self.committed())
         if data.get("kind") != "player_slot" or not data.get("ucid") or not data.get("slot"):
             return
         ucid, slot = str(data["ucid"]), str(data["slot"])
@@ -355,7 +371,10 @@ class Session:
             elif f.state in (FlightState.LANDED, FlightState.LOST) and f.spawn is SpawnState.AGGREGATED:
                 for sid in f.slots.values():   # flown: its jets aren't campaign flights any more
                     self.closed[sid] = f"{f.callsign} has flown its mission"
+                self.rides.done_with(f)
                 f.committed, f.slots, f.client_group = False, {}, None
+        self.rides.tick()
+        await self.rides.auto_board(self.committed(), lambda f: f.takeoff_time - FLY_OPEN_S, self.tod)
         await self.push_rules()
 
     async def _reply(self, player_id: int, text: str) -> None:

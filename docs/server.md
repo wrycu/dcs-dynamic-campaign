@@ -151,6 +151,20 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
     the client script puts them in the cockpit, closing the map. Without the client script, take
     the slot from the slot list: the Hooks refuse a seat before it opens and a seat held for
     someone else; a free seat is anyone's, and taking it makes it theirs.
+  - **The ride to the jet** (`ride_to_jet`, client script version 24 or later; campaign/rides.py):
+    Fly doesn't put the player straight in. A static of the flight's type stands on each of its
+    spots from the mission's load (Client jets aren't in the world until their player takes the
+    slot). Nobody has to press anything: after the reload, a committed player who picks blue
+    spectators waits on the map (the "briefing room"; chat says when the ride comes) and is
+    boarded by themselves when Fly opens, 20 min before take-off; Fly does the same by hand. The
+    first of a flight starts its ride: a Humvee beside the base's tower or the
+    building nearest the jets, the player's view in its passenger seat. It waits 15 s for the
+    rest of the flight (each Fly boards too, up to three), then drives the base's taxiways
+    (DCS's own taxiway file) to the row of jets. It stops beside each nose, nearest first,
+    putting each rider into their own jet and stopping a moment at the others, then drives
+    straight on and is removed 250 m later. A Fly after it has left goes straight in. A seat's
+    stand-in goes just before its player is put in; the AI seats' go with the first player (they
+    spawn with them), all of them when the flight takes off or goes to the AI.
   - **In the jet:** the Client group is the flight from its first birth: take-off, landing and
     losses count as for any flight. It's never despawned while players are in it; landed and shut
     down, it's recovered and the players leave when they like. Players leaving on the ground give
@@ -177,6 +191,9 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
 | `map_refresh_s` | `30` | Real seconds between war map refreshes (at least 5). |
 | `mission_template` | `""` | The .miz the session mission is built from (it needs a player aircraft to copy). `""`: `a2a.miz` in Saved Games' Missions, as the test missions. |
 | `missions_dir` | `""` | Where the session mission is written; must be under Saved Games' Missions, where the Hooks load it from. `""`: `Missions/campaign-dev`. |
+
+| `ride_to_jet` | `true` | Fly as a ride in a Humvee to the jets, for players with client script 24 or later. |
+| `ride_kmh` | `20` | The Humvee's speed (5 to 80). |
 
 `[bubble]` is in [bubble](bubble.md). Unknown keys and sections are an error.
 

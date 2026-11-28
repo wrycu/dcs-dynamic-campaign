@@ -14,6 +14,10 @@ map_refresh_s = 30        # the war map (players with the client script) is redr
 # Saved Games.
 mission_template = ""
 missions_dir = ""
+# Fly as a ride in a Humvee from beside the base's tower to the flight's jets (client script 24 or
+# later; older ones go straight into the jet), at this speed.
+ride_to_jet = true
+ride_kmh = 20
 
 [bubble]
 # Ordinary ground formations exist in DCS while a player is within these distances.

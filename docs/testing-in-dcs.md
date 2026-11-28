@@ -1318,3 +1318,28 @@ As before (`python3 -m tools.ride_probe 2>&1 | tee run30c.log`, host `campaign-d
 ### Results (third try)
 - **Worked as wanted:** the Humvee joined the row before jet 1 and drove down past both noses, stopping beside each. After the hand-off it carried straight on and vanished.
 - Run 30 is done: multi-stop, visible stand-ins, driving off, taxiways, and a start beside a building.
+
+## Run 31: the ride in the campaign (`campaign.server --scenario southern_syria`), backlog item 2
+Fly is now the ride from Run 30 (campaign/rides.py), for your whole flight. You need client script version 24, which you already have, and no new Hooks. See "The ride to the jet" in [server](server.md). Pick a Hornet flight due off in 20 to 30 minutes, as in Run 28.
+
+1. `python3 -m campaign.server --scenario southern_syria 2>&1 | tee run31.log` (the campaign carries on). Host `campaign-dev/campaign-p20.miz`.
+2. **Join and Commit** as in Run 28, steps 3 and 4. After the reload, the log has `SESSION Uzi 4 has its jets`, then `RIDE <base>: N taxiway segments`, then `RIDE Uzi 4: 2 jets at <base>, stand-ins up`.
+3. **Before Fly:** as a blue spectator, look at your flight's spots (F10, then F7 or F11 near them). Are there two Hornets standing there, facing sensibly?
+4. **The ride comes by itself.** Pick blue spectators after the reload. Don't press Fly.
+   - If take-off is more than 20 min away, chat says `> Your ride to Uzi 4-1 comes at HH:MM` and the map stays.
+   - From then on, within a few seconds, you're boarded with no click needed. The log shows `RIDE player ... boards for Uzi 4-1 by themselves`. The log also has `RIDE player <ucid>: ...` lines saying what it was waiting for.
+
+   First try (2026-11-28): after the reload the map opened and nothing came. The ride started only from Fly, and nothing pressed it. Expect:
+   - chat: `> To Uzi 4-1 by Humvee: front passenger seat beside <building>...`;
+   - your view in the Humvee's seat, where you can look around;
+   - `Off we go` after 15 s;
+   - taxiways to the row, beside each nose, into your jet, then on past;
+   - the log: `RIDE start beside ...`, `RIDE Ride Uzi 4 at ...: 3 legs`, `RIDE player 1 into Uzi 4-1`, `SESSION Uzi 4 is in DCS`, `RIDE Ride Uzi 4 done`.
+5. **In the jet:** is your AI wingman, Uzi 4-2, there in place of its stand-in, with no double jet and no explosion? Then the usual checks: hot, loadout, cartridge.
+6. Fly or not as you like. Once you've taken off, the remaining stand-ins go.
+7. Ctrl-C the server.
+
+Send back `run31.log` and what you saw. Possible trouble spots:
+- the start, at a base other than Khalkhalah;
+- the AI wingman spawning on top of its stand-in;
+- a Fly pressed by someone in a jet. They go straight in, without the ride.

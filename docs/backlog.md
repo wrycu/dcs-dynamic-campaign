@@ -81,8 +81,10 @@ Southern Syria (first DCS run is Run 24). Players can't claim flights yet. Neede
   network from DCS's own file (`AirfieldsTaxiways/<base>.rn5`, format decoded 2026-11-27) and
   routes on it; `campaign/ride.py` plans the ride (start beside the tower or a building, the jets
   nearest-first, a stop 14 m out along each stand's lead-in, then back); static Hornets stand in
-  for the empty Client jets. Then into the campaign: Fly becomes "ride to your jet" for the whole
-  flight.
+  for the empty Client jets. Third try: right. Into the campaign (campaign/rides.py, Run 31): Fly
+  is the ride for the whole flight, with stand-ins for every seat until it's in DCS; `ride_to_jet`
+  in `[server]` turns it off. Still to do: a check for buildings in the way of the drive-off, and
+  the stand-in coming back when a player leaves their jet on the ramp.
 - **Where to join.** Join a flight on the ramp before takeoff, or one that is already airborne.
   To decide: joining in the air needs a spawn at the flight's position, i.e. a player slot that
   exists there; with one .miz and no client mods, the realistic options are fixed slots per
