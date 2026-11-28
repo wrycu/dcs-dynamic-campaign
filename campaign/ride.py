@@ -223,11 +223,164 @@ def waypoints(points: list[Pos], speed_ms: float) -> list[dict[str, Any]]:
             for p in points]
 
 
-def briefing_point(objects: Iterable[dict[str, Any]], net: TaxiNet | None, jets: list[Pos],
-                   max_from_taxiway_m: float = 400.0) -> tuple[Pos, str] | None:
-    """Where the ride starts: beside the base's tower if there's one (scenery objects from the
-    mission bridge's ``scenery`` query: ``{type, pos}``), else beside the building nearest the jets;
-    BESIDE_M from it towards the taxiways. Returns (point, what it's beside), or None."""
+# ---------- a clear spot to start (Run 31: the Humvee started inside a terminal) ----------
+
+CLEAR_M = 4.0            # the start this far from anything (the Humvee is 5 m long)
+PATH_CLEAR_M = 2.5       # and its straight line onto the taxiways this far
+NO_BOX_M = {"build": 15.0, "hangar": 25.0, "angar": 25.0, "tower": 12.0, "house": 8.0, "barrack": 12.0,
+            "shelter": 20.0, "ukrytie": 20.0, "office": 12.0, "bld": 12.0}   # radius when DCS gives no box
+NO_BOX_DEFAULT_M = 2.0
+SEARCH_M = 150.0         # look this far out from the building
+SEARCH_STEP_M = 3.0
+SEARCH_DIRS = 24
+
+
+@dataclass
+class Footprint:
+    """An object's ground footprint: a polygon (its box, turned as it stands), or a circle."""
+    pos: Pos
+    corners: list[Pos] | None = None
+    radius: float = 0.0
+    type: str = ""
+
+    def distance(self, p: Pos) -> float:
+        """From ``p`` to the footprint's edge; 0 inside it."""
+        if not self.corners:
+            return max(0.0, _d(p, self.pos) - self.radius)
+        if _inside(p, self.corners):
+            return 0.0
+        return min(_d(p, _seg_point(p, a, b)) for a, b in zip(self.corners, self.corners[1:] + self.corners[:1]))
+
+
+def footprints(objects: Iterable[dict[str, Any]], boxes: dict[str, list[float]] | None = None) -> list[Footprint]:
+    """From the mission bridge's ``footprints`` query: ``{type, pos, box?: [4 corners], fwd?, right?}``.
+    Without a box from DCS, the model's box from the terrain's files (``boxes``, type name lower
+    case -> [min x, min up, min z, max x, max up, max z]; campaign/model_boxes.py), turned by the
+    object's axes; else a radius by its type name."""
+    out = []
+    for o in objects:
+        if not isinstance(o.get("pos"), dict):
+            continue
+        pos = Pos(float(o["pos"]["x"]), float(o["pos"]["y"]))
+        t = str(o.get("type") or "")
+        box = o.get("box")
+        mb = (boxes or {}).get(t.lower())
+        fwd, right = o.get("fwd"), o.get("right")
+        if isinstance(box, list) and len(box) >= 3 and all(isinstance(c, dict) for c in box):
+            out.append(Footprint(pos, [Pos(float(c["x"]), float(c["y"])) for c in box], type=t))
+        elif mb and isinstance(fwd, dict) and isinstance(right, dict):
+            fx, fy, rx, ry = float(fwd["x"]), float(fwd["y"]), float(right["x"]), float(right["y"])
+            corners = [Pos(pos.x + fx * a + rx * c, pos.y + fy * a + ry * c)
+                       for a, c in ((mb[0], mb[2]), (mb[3], mb[2]), (mb[3], mb[5]), (mb[0], mb[5]))]
+            out.append(Footprint(pos, corners, type=t))
+        elif mb:   # its size but not which way it faces: a circle round the whole box
+            r = max(math.hypot(a, c) for a in (mb[0], mb[3]) for c in (mb[2], mb[5]))
+            out.append(Footprint(pos, radius=r, type=t))
+        else:
+            lt = t.lower()
+            r = next((m for w, m in NO_BOX_M.items() if w in lt), NO_BOX_DEFAULT_M)
+            out.append(Footprint(pos, radius=r, type=t))
+    return out
+
+
+def clearance(p: Pos, obstacles: list[Footprint]) -> float:
+    return min((o.distance(p) for o in obstacles), default=math.inf)
+
+
+def _line_clear(a: Pos, b: Pos, obstacles: list[Footprint], m: float) -> bool:
+    n = max(1, int(_d(a, b) / 2.0))
+    return all(clearance(Pos(a.x + (b.x - a.x) * i / n, a.y + (b.y - a.y) * i / n), obstacles) >= m
+               for i in range(n + 1))
+
+
+def clear_spot(center: Pos, net: TaxiNet | None, obstacles: list[Footprint],
+               toward: Pos | None = None) -> tuple[Pos, float] | None:
+    """A spot beside the building at ``center``: out from it in some direction to the first point
+    CLEAR_M from everything, with a clear straight line onto the taxiways (or towards ``toward``
+    without a network). The nearest such spot to the building wins, ties going to the side
+    facing the taxiways. Returns (spot, metres from the building's centre), or None."""
+    best: tuple[float, Pos, float] | None = None
+    aim = taxi_entry(net, center) or toward
+    base = math.atan2(aim.y - center.y, aim.x - center.x) if aim is not None else 0.0
+    for k in range(SEARCH_DIRS):
+        a = base + 2 * math.pi * k / SEARCH_DIRS
+        u = (math.cos(a), math.sin(a))
+        d = SEARCH_STEP_M
+        while d <= SEARCH_M:
+            p = _along(center, u, d)
+            if clearance(p, obstacles) >= CLEAR_M:
+                break
+            d += SEARCH_STEP_M
+        else:
+            continue
+        exit_ = taxi_entry(net, p) or toward
+        if exit_ is not None and not _line_clear(p, exit_, obstacles, PATH_CLEAR_M):
+            continue
+        turn = abs((a - base + math.pi) % (2 * math.pi) - math.pi)
+        score = d + 10.0 * turn / math.pi + 0.05 * (_d(p, exit_) if exit_ is not None else 0.0)
+        if best is None or score < best[0]:
+            best = (score, p, d)
+    return (best[1], best[2]) if best else None
+
+
+def _inside(p: Pos, poly: list[Pos]) -> bool:
+    inside = False
+    for a, b in zip(poly, poly[1:] + poly[:1]):
+        if (a.y > p.y) != (b.y > p.y):
+            x = a.x + (p.y - a.y) * (b.x - a.x) / (b.y - a.y)
+            if p.x < x:
+                inside = not inside
+    return inside
+
+
+def _seg_point(p: Pos, a: Pos, b: Pos) -> Pos:
+    dx, dy = b.x - a.x, b.y - a.y
+    l2 = dx * dx + dy * dy
+    if l2 == 0:
+        return a
+    t = max(0.0, min(1.0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2))
+    return Pos(a.x + dx * t, a.y + dy * t)
+
+
+# Administrative buildings, best first, with the metres a ride's start may lie farther from the jets
+# to be at one rather than the next (Run 32: identified by eye at Prince Hassan and Khalkhalah;
+# DCS's shared airfield set, used across theatres).
+ADMIN_MODELS = {
+    "airfields_building_21": 0.0,      # two-storey headquarters, flags and trucks outside
+    "airfields_building_13": 100.0,    # briefing-type building
+    "airfields_building_2": 100.0,     # briefing-type building
+    "airfields_building_7": 150.0,     # office
+    "airfields_building_19_2": 200.0,  # administrative block (several together)
+    "airfields_building_6": 250.0,     # operations building with a radar mast
+    "airfields_building_27": 500.0,    # the tower's annex: only if nothing else
+}
+ADMIN_GROUNDS_M = 600.0  # an admin building this close to the taxiways is on the airfield's grounds
+
+
+def pick_admin(objects: Iterable[dict[str, Any]], net: TaxiNet | None, jets: list[Pos]) -> dict[str, Any] | None:
+    """The administrative building (ADMIN_MODELS) for a ride to these jets: the nearest to them,
+    the better models counting as nearer by their allowance."""
+    c = Pos(sum(j.x for j in jets) / len(jets), sum(j.y for j in jets) / len(jets)) if jets else None
+    best: tuple[float, dict[str, Any]] | None = None
+    for o in objects:
+        t = str(o.get("type") or "").lower()
+        if t not in ADMIN_MODELS or not isinstance(o.get("pos"), dict):
+            continue
+        p = Pos(float(o["pos"]["x"]), float(o["pos"]["y"]))
+        entry = taxi_entry(net, p)
+        if entry is not None and _d(entry, p) > ADMIN_GROUNDS_M:
+            continue
+        score = (_d(p, c) if c is not None else 0.0) + ADMIN_MODELS[t]
+        if best is None or score < best[0]:
+            best = (score, o)
+    return best[1] if best else None
+
+
+def pick_building(objects: Iterable[dict[str, Any]], net: TaxiNet | None, jets: list[Pos],
+                  max_from_taxiway_m: float = 400.0) -> dict[str, Any] | None:
+    """The building (a tower counts) nearest the jets, near the taxiways (scenery from the mission
+    bridge's ``scenery`` query: ``{type, pos}``). Only a guess: bases' real starts are mapped by
+    hand (campaign/ride_starts.py; Run 31: the tower is rarely the right place)."""
     def near_jets(o: dict[str, Any]) -> float:
         p = Pos(o["pos"]["x"], o["pos"]["y"])
         return min((_d(p, j) for j in jets), default=0.0)
@@ -241,9 +394,15 @@ def briefing_point(objects: Iterable[dict[str, Any]], net: TaxiNet | None, jets:
         if entry is not None and _d(entry, p) > max_from_taxiway_m:
             continue
         usable.append(o)
-    towers = [o for o in usable if any(w in str(o.get("type", "")).lower() for w in TOWER_WORDS)]
-    buildings = [o for o in usable if any(w in str(o.get("type", "")).lower() for w in BUILDING_WORDS)]
-    pick = min(towers, key=near_jets) if towers else (min(buildings, key=near_jets) if buildings else None)
+    buildings = [o for o in usable if any(w in str(o.get("type", "")).lower() for w in TOWER_WORDS + BUILDING_WORDS)]
+    return min(buildings, key=near_jets) if buildings else None
+
+
+def briefing_point(objects: Iterable[dict[str, Any]], net: TaxiNet | None, jets: list[Pos],
+                   max_from_taxiway_m: float = 400.0) -> tuple[Pos, str] | None:
+    """Where the ride starts without footprints: BESIDE_M from the building ``pick_building``
+    chooses, towards the taxiways. Returns (point, what it's beside), or None."""
+    pick = pick_building(objects, net, jets, max_from_taxiway_m)
     if pick is None:
         return None
     p = Pos(pick["pos"]["x"], pick["pos"]["y"])

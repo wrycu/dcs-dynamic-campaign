@@ -154,7 +154,24 @@ What blue sees ("plausible intel": what a real side would know, not all the engi
   - **The ride to the jet** (`ride_to_jet`, client script version 24 or later; campaign/rides.py):
     Fly doesn't put the player straight in. A static of the flight's type stands on each of its
     spots from the mission's load (Client jets aren't in the world until their player takes the
-    slot). Nobody has to press anything: after the reload, a committed player who picks blue
+    slot). The ride starts at the base's **mapped start** nearest the jets (below). A base with
+    none (the usual case) starts beside an **administrative building**: DCS's airfield models
+    identified by eye in Run 32 (headquarters first, then briefing buildings, offices, the admin
+    block, the operations building, and the tower's annex as a last resort), the best near the
+    jets (`ADMIN_MODELS` in campaign/ride.py: each model's allowance in metres). The spot is the
+    nearest one 4 m clear of every building, static and unit there, with a clear line onto the
+    taxiways. Sizes come from the models' own boxes in the terrain's files,
+    `data/theaters/<map>/model_boxes.json` (`python3 -m tools.extract_model_boxes`), because DCS
+    gives scenery none. A base without any of those models uses the building nearest the jets.
+  - **Mapping where rides start:** on the F10 map, put a mark with the text `ride start` where the
+    Humvee should wait, and the server saves it for the nearest airbase (within about 3 nm).
+    Chat confirms it, and the saved starts show on the F10 map as read-only marks reading
+    `Ride start (<base>, saved)`. A base can have several, one per ramp; each ride uses the one
+    nearest its jets. A `ride start delete` mark removes the saved start nearest it (within
+    500 ft), and changing a saved mark's text to anything else removes that one. You can delete
+    your own marks afterwards: the saved starts stay. They're kept in `data/ride_starts.json`
+    (theatre, then airbase), which is meant to be committed with the rest of the data.
+    Nobody has to press anything: after the reload, a committed player who picks blue
     spectators waits on the map (the "briefing room"; chat says when the ride comes) and is
     boarded by themselves when Fly opens, 20 min before take-off; Fly does the same by hand. The
     first of a flight starts its ride: a Humvee beside the base's tower or the

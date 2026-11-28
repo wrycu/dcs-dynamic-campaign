@@ -50,14 +50,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import collections
 import logging
 import math
 from pathlib import Path
 from typing import Any
 
 from campaign import ride as ridemod
-from campaign import taxinet
+from campaign import model_boxes, taxinet
+from campaign.ride_starts import RideStarts
+from campaign.rides import find_start
 from campaign.bridge import Bridge, BridgeError, Connection
 from campaign.catalog import COUNTRY_FOR_SIDE
 from campaign.model import Pos, Side
@@ -81,7 +82,6 @@ MISSION_FILES = ("campaign-p22a.miz", "campaign-p22b.miz")
 BLUE = 2
 OPEN_SPOTS = (104, 72, 68)       # open spots first, shelters last: the drive should end in the open
 PAIR_M = (18.0, 80.0)            # the two jets' spots this far apart
-SCENERY_M = 1500.0               # look for the tower and buildings this far around the jets
 GATHER_S = 8.0                   # the Humvee waits this long for riders before it sets off
 DROP_S = 6.0                     # stopped at each jet this long
 ARRIVE_M = 4.0                   # this close to the end of a leg: there
@@ -289,32 +289,14 @@ class Probe:
             print(f"MISSION setup failed: {e}", flush=True)
 
     async def find_start(self) -> None:
-        """Beside the tower, or the building nearest the jets (campaign/ride.py)."""
-        c = Pos(sum(j.pos.x for j in self.jets) / len(self.jets), sum(j.pos.y for j in self.jets) / len(self.jets))
-        words = list(ridemod.TOWER_WORDS + ridemod.BUILDING_WORDS)
-        found: list[dict[str, Any]] = []
-        try:
-            res = await self.call(self.mission, "query", {"what": "scenery", "center": {"x": c.x, "y": c.y},
-                                                          "radius": SCENERY_M, "match": words, "limit": 400})
-            counts = collections.Counter(res.get("counts") or {})
-            found = res.get("found") or []
-            print(f"SCENERY {res.get('total')} objects within {SCENERY_M:.0f} m of the jets; most common: "
-                  + ", ".join(f"{t} {n}" for t, n in counts.most_common(12)), flush=True)
-            print(f"SCENERY {len(found)} match {'/'.join(words)}: "
-                  + ", ".join(f"{t} {n}" for t, n in collections.Counter(o.get('type') for o in found).most_common(10)),
-                  flush=True)
-        except (BridgeError, asyncio.TimeoutError) as e:
-            print(f"SCENERY query failed: {e}", flush=True)
-        pick = ridemod.briefing_point(found, self.net, [j.pos for j in self.jets])
-        if pick is not None:
-            self.start, what = pick
-            print(f"START   beside {what}: x {self.start.x:.0f} y {self.start.y:.0f}, "
-                  f"{min(dist(self.start, j.pos) for j in self.jets):.0f} m from the nearest jet", flush=True)
-            return
-        # No building found: 300 m along the taxiways from the jets.
-        far = c if self.net is None else self.net.nearest(Pos(c.x + 300, c.y))[2]
-        self.start = far
-        print(f"START   no tower or building found: a taxiway point at x {far.x:.0f} y {far.y:.0f}", flush=True)
+        """Beside the tower, or the building nearest the jets, clear of everything (campaign/rides.py)."""
+        async def call(op: str, data: dict) -> Any:
+            return await self.call(self.mission, op, data)
+        theatre = await self.theatre()
+        mapped = RideStarts().at(theatre, AIRBASE_NAME)
+        boxes = model_boxes.load(model_boxes.path_for(theatre))
+        self.start, _, note = await find_start(call, self.net, [j.pos for j in self.jets], mapped, boxes)
+        print(f"START   {note}", flush=True)
 
     async def build_and_load(self) -> None:
         try:

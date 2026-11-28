@@ -1343,3 +1343,60 @@ Send back `run31.log` and what you saw. Possible trouble spots:
 - the start, at a base other than Khalkhalah;
 - the AI wingman spawning on top of its stand-in;
 - a Fly pressed by someone in a jet. They go straight in, without the ride.
+
+### Results (second try)
+- **The ride came by itself and worked,** but the Humvee started inside a building. The start was 20 m from the centre of the tower (`AIRPORT_BUILDING1_TOWER`, Prince Hassan), which is part of the large terminal, so that point was inside it. Nothing knew how big a building was.
+
+**Changed:** the mission bridge has a new `footprints` query: each object near the chosen building, with its bounding box turned as it stands. The start is now the nearest spot that's 4 m clear of everything, with a clear straight line onto the taxiways, preferring the side towards the taxiways. Without one, it starts on the taxiway in front of the building. The ride probe uses the same code. The log line is `RIDE start beside <building>: x .. y .., N m from its centre, clear of N objects (M with boxes)`.
+
+### Third try
+As the second. Restart the server and the mission; the bridge loads from the repo. Check two things:
+- Where does the Humvee start? It should be next to the tower building, in the open.
+- What does the `RIDE start` line say? `0 with boxes` means DCS gives no boxes for scenery, so it fell back to rough sizes by building type.
+
+### Mapping the starts (asked 2026-11-28)
+The tower is rarely the right place for the ride to start. Each base's start is now mapped by hand with F10 marks (campaign/ride_starts.py, saved in `data/ride_starts.json`). The guess for unmapped bases is now the building nearest the jets, with no tower preference. To map one:
+
+1. Restart the server and the mission (the bridge loads from the repo).
+2. On the F10 map, add a mark where the Humvee should wait (the briefing room's door, the squadron's building) and type `ride start` as its text. Chat says `Ride start saved for <base> (1 there now)`. A read-only `Ride start (<base>, saved)` mark appears there; delete your own mark if you like.
+3. Big base with several ramps: add one per ramp. Each ride uses the one nearest its jets.
+4. Wrong spot: add a `ride start delete` mark on top of it.
+5. Then commit a flight there as before. The log says `RIDE start at the mapped start x .. y .., N m from the jets`, and the Humvee should be waiting right there.
+
+Things to check:
+- Do marks from a spectator reach the server? The log shows `RIDE starts at <base>: ...`.
+- Does the confirmation appear in chat?
+
+## Run 32: which airfield buildings are administrative? (`tools.airfield_buildings`)
+The ride should start at an administrative building on the airfield's grounds (an office, operations or squadron building), not the tower. DCS's type names (`SYRIA_BLOCK_BUILDING_04`) don't say what a building is. So this run surveys the buildings and you identify some by eye, and from those I'll work out a rule. Anything at least 8 m long or wide, within 600 m of the taxiways, counts.
+
+1. `python3 -m tools.airfield_buildings 2>&1 | tee run32.log` (default: Prince Hassan and Khalkhalah; `--airbase "<name>"` for others, repeatable). Host `campaign-dev/campaign-p20.miz`. Stop the campaign server first: it uses the same port.
+2. The log lists each base's buildings as `B1`, `B2`... (nearest the parking first), with type, size and distances, then a count per type. Each label is on the F10 map in yellow. `build/airfield_buildings/<base>.json` has the same.
+3. In DCS, look at them: F10 to find a label, then F11 (free camera) or F7 to fly over. For each base, note:
+   - which numbers are **offices, operations, squadron or terminal-like buildings**, where pilots would plausibly be briefed. A best guess is fine.
+   - a few that are clearly **something else** (hangar, aircraft shelter, warehouse, fuel, barracks, housing), so I can rule their types out;
+   - which one you'd pick as **the** start for each ramp.
+4. `-label` / `-unlabel` in chat redraws or hides the labels, and `-survey` surveys again. Ctrl-C when done.
+
+Send back `run32.log` and your notes, for example "Prince Hassan: B4, B9 offices; B2 hangar; start at B9".
+
+### Results (2026-11-28)
+- **First try:** only fuel tanks were labelled. DCS gives almost no scenery a bounding box (only the tanks had one), so the 8 m size filter dropped every real building. Now buildings without a box are kept and clutter is dropped by type name, matching whole name parts (matching inside words also dropped `STREET_MARKET`, because of "tree").
+- **Second try, Prince Hassan (411 buildings):**
+  - Look like briefing buildings: B205 (`AIRFIELDS_BUILDING_13`) and B199 (`AIRFIELDS_BUILDING_2`).
+  - Look administrative: B196, B204, B206, B228, B246 and B262, all `AIRFIELDS_BUILDING_19_2`, a block of six 220 to 360 m from the parking.
+  - Apartments: B225 (`SYRIA_CITY_HOUSE_10`).
+  - Every pick is in DCS's shared `AIRFIELDS_BUILDING_<n>` set. Next: sort the set's other numbers (questions to the user).
+- **Numbering:** the labels were numbered nearest the parking first, which looked random on the map. Now they read like a page: rows 200 m deep, north to south, and west to east within each row. `STREET_MARKET` stalls are clutter. The saved surveys were renumbered the same way; `old_n` keeps the old numbers. `--saved` labels the saved survey without surveying again, so the numbers match the questions. In the new numbers, the picks so far are B194 (`_2`) and B195 (`_13`), and the block of six `_19_2` is B95, B161, B163, B164, B166 and B168.
+- **Third look (screenshots):**
+  - **Admin:** `AIRFIELDS_BUILDING_21` is the headquarters (Pri B303, Kha B44). `_7` is an office (Pri B23, Kha B4), `_6` an operations building with a radar mast (Pri B7), and `_27` the tower's annex (Pri B184).
+  - **Not admin:** `CG_BUILDING07` is a red-roofed warehouse (Pri B5). `_24` is a shed (Pri B26). `_33` and `_23` are aircraft shelters (Pri B212, Kha B32). `INDUSTRIAL_UN` and `CONCORD_FACIL_02` are warehouses or garages (Pri B49, B112).
+- **Sizes:** the terrain's model files have every scenery model's box (campaign/model_boxes.py; 1,405 for Syria, in `data/theaters/syria/model_boxes.json`). They match the screenshots: HQ 25 × 77 m, office 15 × 21 m, shed 7 × 22 m, shelter 59 × 66 m. The tower itself is only 13 × 13 m; Run 31's Humvee was inside its annex (`_27`, 29 × 34 m). The bridge's `footprints` now gives each object's axes, so a model's box is turned as it stands.
+
+**Changed:** the ride starts beside an administrative building (`ADMIN_MODELS` in campaign/ride.py, best first, each with an allowance in metres against its distance from the jets). The spot is clear of every object's real footprint. On the survey data it picks Khalkhalah's office (Kha B4) for the Run 30 jets, and at Prince Hassan the briefing building or the north office, depending on the ramp.
+
+### Run 33: the ride from the admin building
+As Run 31 (campaign server, commit a flight at Prince Hassan or Khalkhalah, pick blue spectators). The log says `RIDE start beside AIRFIELDS_BUILDING_<n>: x .. y .., N m from its centre, clear of N objects (M with their size)`. Check three things:
+- Is the Humvee beside that building, outside it, and not clipping anything?
+- Is it a sensible building to walk out of?
+- Is the drive to the jets reasonable?

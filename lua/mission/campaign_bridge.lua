@@ -394,6 +394,16 @@ local function follow_walker(o, from)
   B.walkers[key] = w
 end
 
+-- F10 map marks players place (to map where rides start, Run 31). Not the campaign's own: those
+-- use ids from next_mark up.
+local function mark_event(change)
+  return function(e)
+    if e.idx and e.idx >= 7000000 then return end
+    emit("mark", { change = change, idx = e.idx, text = e.text, coalition = e.coalition,
+                   pos = e.pos and pos2(e.pos) or nil, author = describe(e.initiator) })
+  end
+end
+
 local event_map = {
   [E.S_EVENT_BIRTH] = function(e)
     local d = describe(e.initiator)
@@ -438,6 +448,9 @@ local event_map = {
     if e.initiator then follow_walker(e.initiator, nil) end
     emit("landing_after_ejection", { unit = describe(e.initiator), place = place_name(e) })
   end,
+  [E.S_EVENT_MARK_ADDED] = mark_event("added"),
+  [E.S_EVENT_MARK_CHANGE] = mark_event("changed"),
+  [E.S_EVENT_MARK_REMOVED] = mark_event("removed"),
   [E.S_EVENT_PLAYER_ENTER_UNIT] = function(e) emit("player_enter_unit", { unit = describe(e.initiator) }) end,
   [E.S_EVENT_PLAYER_LEAVE_UNIT] = function(e)
     local d = describe(e.initiator)
@@ -907,6 +920,50 @@ function commands.query(d)
       return true
     end)
     return { total = total, counts = counts, found = found }
+  elseif d.what == "footprints" then
+    -- Scenery, statics and units within radius (m) of center, each with its footprint on the
+    -- ground: the four corners of its bounding box (getDesc().box) turned as it stands, or none if
+    -- DCS gives no box (most scenery: the engine then uses the model's box from the terrain's files,
+    -- campaign/model_boxes.py, turned by fwd and right, its axes on the ground). For a clear spot to start the ride to the jets (Run 31: inside a terminal).
+    -- d.scenery_only: scenery alone; d.min_size (m): only objects whose box is at least this long
+    -- or wide (none without a box, unless d.keep_unboxed), to survey an airfield's buildings (tools/airfield_buildings.py).
+    local found = {}
+    local limit = d.limit or 1500
+    local min_size = tonumber(d.min_size) or 0
+    local vol = { id = world.VolumeType.SPHERE,
+                  params = { point = { x = d.center.x, y = land.getHeight({ x = d.center.x, y = d.center.y }),
+                                       z = d.center.y }, radius = d.radius } }
+    local cats = d.scenery_only and { Object.Category.SCENERY }
+                 or { Object.Category.SCENERY, Object.Category.STATIC, Object.Category.UNIT }
+    world.searchObjects(cats, vol, function(o)
+      if #found >= limit then return false end
+      local e = {}
+      local big = min_size <= 0
+      pcall(function()
+        e.type = o:getTypeName()
+        local P = o:getPosition()
+        e.pos = pos2(P.p)
+        e.fwd, e.right = { x = P.x.x, y = P.x.z }, { x = P.z.x, y = P.z.z }   -- its axes on the ground
+        local desc = o:getDesc()
+        local b = desc and desc.box
+        if b and b.min and b.max then
+          local corners = {}
+          for _, c in ipairs({ { b.min.x, b.min.z }, { b.max.x, b.min.z }, { b.max.x, b.max.z }, { b.min.x, b.max.z } }) do
+            corners[#corners + 1] = { x = P.p.x + P.x.x * c[1] + P.z.x * c[2],
+                                      y = P.p.z + P.x.z * c[1] + P.z.z * c[2] }
+          end
+          e.box = corners
+          e.height = b.max.y - b.min.y
+          e.length, e.width = b.max.x - b.min.x, b.max.z - b.min.z
+          if math.max(e.length, e.width) >= min_size then big = true end
+        end
+        if d.scenery_only then e.id = tostring(o:getName()) end   -- the map object's id
+      end)
+      if not e.box and d.keep_unboxed then big = true end   -- most scenery has no box (Run 32)
+      if e.pos and big then found[#found + 1] = e end
+      return true
+    end)
+    return { found = found, total = #found }
   elseif d.what == "objects" then
     -- Units, weapons, statics and cargo within radius (m) of center, up to d.limit (50): to find
     -- objects the events don't hand over, e.g. a pilot walking after ejecting.

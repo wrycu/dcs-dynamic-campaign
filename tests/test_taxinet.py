@@ -154,17 +154,65 @@ class RideTest(unittest.TestCase):
             v = ride._unit(a, b)
             self.assertGreater(v[0] * u[0] + v[1] * u[1], 0.99)
 
-    def test_briefing_point_prefers_the_tower(self) -> None:
+    def box(self, cx: float, cy: float, hx: float, hy: float, t: str = "hangar") -> dict:
+        return {"type": t, "pos": {"x": X0 + cx, "y": Y0 + cy},
+                "box": [{"x": X0 + cx + dx, "y": Y0 + cy + dy} for dx, dy in ((-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy))]}
+
+    def test_a_clear_start_outside_the_building(self):
+        # A 60 x 40 m terminal 100 m off the bottom taxiway (y 0): the start is clear of it, on the
+        # taxiway side, not 20 m from its centre (Run 31: inside the terminal).
+        obs = ride.footprints([self.box(500, -100, 30, 20, "AIRPORT_BUILDING1_TOWER")])
+        p, d = ride.clear_spot(P(500, -100), self.net, obs)
+        self.assertGreaterEqual(ride.clearance(p, obs), ride.CLEAR_M)
+        self.assertLess(ride.clearance(p, obs), ride.CLEAR_M + ride.SEARCH_STEP_M)   # but right beside it
+        self.assertGreater(p.y, Y0 - 100 + 20)                                        # the taxiway side
+        self.assertAlmostEqual(p.x, X0 + 500, delta=1)
+
+    def test_a_clear_start_round_a_blocked_side(self):
+        # A wall of hangars between the terminal and the taxiway: start on a side with a clear way out.
+        obs = ride.footprints([self.box(500, -100, 30, 20), self.box(500, -60, 200, 10)])
+        p, _ = ride.clear_spot(P(500, -100), self.net, obs)
+        self.assertGreaterEqual(ride.clearance(p, obs), ride.CLEAR_M)
+        self.assertTrue(ride._line_clear(p, ride.taxi_entry(self.net, p), obs, ride.PATH_CLEAR_M))
+
+    def test_objects_without_boxes_get_a_radius(self):
+        fp = ride.footprints([{"type": "SYRIA_BLOCK_BUILDING_04", "pos": {"x": 0, "y": 0}},
+                              {"type": "TRASHCAN_EU_SMALL", "pos": {"x": 50, "y": 0}}])
+        self.assertEqual([f.radius for f in fp], [15.0, ride.NO_BOX_DEFAULT_M])
+        self.assertEqual(fp[0].distance(Pos(20, 0)), 5.0)
+
+    def test_footprint_from_the_model_box_turned_as_it_stands(self) -> None:
+        # A 10 x 4 m model (x forward), facing east: 10 m east-west, 4 m north-south.
+        boxes = {"office": [-5.0, 0.0, -2.0, 5.0, 6.0, 2.0]}
+        o = {"type": "OFFICE", "pos": {"x": 0.0, "y": 0.0}, "fwd": {"x": 0.0, "y": 1.0}, "right": {"x": -1.0, "y": 0.0}}
+        fp = ride.footprints([o], boxes)[0]
+        self.assertEqual(fp.distance(Pos(0.0, 4.9)), 0.0)        # inside, along its length
+        self.assertAlmostEqual(fp.distance(Pos(3.0, 0.0)), 1.0)   # 2 m half-width
+        unturned = ride.footprints([{"type": "office", "pos": {"x": 0.0, "y": 0.0}}], boxes)[0]
+        self.assertAlmostEqual(unturned.radius, math.hypot(5, 2))  # facing unknown: a circle round it
+
+    def test_admin_building_by_model_and_distance(self) -> None:
+        jets = [P(500, -40)]
+        objs = [{"type": "AIRFIELDS_BUILDING_24", "pos": {"x": X0 + 500, "y": Y0 - 80}},   # a shed, nearest
+                {"type": "AIRFIELDS_BUILDING_7", "pos": {"x": X0 + 600, "y": Y0 - 100}},   # office, ~117 m
+                {"type": "AIRFIELDS_BUILDING_21", "pos": {"x": X0 + 800, "y": Y0 - 100}},  # HQ, ~306 m
+                {"type": "AIRFIELDS_BUILDING_21", "pos": {"x": X0 + 500, "y": Y0 - 3000}}]  # HQ, off the grounds
+        self.assertEqual(ride.pick_admin(objs, self.net, jets)["pos"]["x"], X0 + 600)   # 117 + 150 < 306 + 0
+        objs[1]["pos"]["x"] = X0 + 900   # the office farther (~402 + 150): the HQ now
+        self.assertEqual(ride.pick_admin(objs, self.net, jets)["type"], "AIRFIELDS_BUILDING_21")
+        self.assertIsNone(ride.pick_admin(objs[:1], self.net, jets))
+
+    def test_briefing_point_is_the_building_nearest_the_jets(self) -> None:
         objs = [{"type": "hangar_1", "pos": {"x": X0 + 520, "y": Y0 - 100}},
                 {"type": "KDP_tower", "pos": {"x": X0 + 200, "y": Y0 - 150}},
                 {"type": "tree", "pos": {"x": X0 + 500, "y": Y0 - 30}},
                 {"type": "far_building", "pos": {"x": X0 + 500, "y": Y0 - 5000}}]
         p, what = ride.briefing_point(objs, self.net, [P(500, -40)])
+        self.assertEqual(what, "hangar_1")   # not the tower (Run 31)
+        self.assertAlmostEqual(p.x, X0 + 520)
+        self.assertAlmostEqual(p.y, Y0 - 100 + ride.BESIDE_M)
+        p, what = ride.briefing_point(objs[1:], self.net, [P(500, -40)])
         self.assertEqual(what, "KDP_tower")
-        self.assertAlmostEqual(p.x, X0 + 200)
-        self.assertAlmostEqual(p.y, Y0 - 150 + ride.BESIDE_M)
-        p, what = ride.briefing_point(objs[:1] + objs[2:], self.net, [P(500, -40)])
-        self.assertEqual(what, "hangar_1")
         self.assertIsNone(ride.briefing_point(objs[2:3], self.net, []))
 
 

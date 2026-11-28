@@ -1,4 +1,6 @@
 import asyncio
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -53,6 +55,10 @@ class RideTests(unittest.IsolatedAsyncioTestCase):
         self.e = RideEngine(self.w)
         self.s = Session(self.e)
         self.s.rides.dcs_dir = Path("/nonexistent")   # no taxiways: straight lines
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s.rides.starts_path = Path(self.tmp.name) / "ride_starts.json"
+        self.e.airbases = {"Base": {"name": "Base", "pos": {"x": 1000.0, "y": 0.0}, "category": 0},
+                           "Far": {"name": "Far", "pos": {"x": 90_000.0, "y": 0.0}, "category": 0}}
         self.e.warmap.session = self.s
         self.f = self.w.flight("bai2", "blue_sq", FlightState.PLANNED, mission="BAI",
                                takeoff=self.w.state.clock + 1800, player=True)
@@ -67,6 +73,7 @@ class RideTests(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self):
         self.patch.stop()
+        self.tmp.cleanup()
 
     def mission(self, op):
         return [d for src, o, d in self.e.calls if src == "mission" and o == op]
@@ -123,6 +130,40 @@ class RideTests(unittest.IsolatedAsyncioTestCase):
         n = len(self.e.hooks("force_slot"))
         await self.s.tick()   # boarded once only, not again after getting in
         self.assertEqual(len(self.e.hooks("force_slot")), n)
+
+    def mark(self, idx, text, x, y, change="added"):
+        self.s.on_event({"kind": "mark", "change": change, "idx": idx, "text": text, "pos": {"x": x, "y": y}})
+
+    async def test_mapping_ride_starts_with_f10_marks(self):
+        await self.s.on_mission()
+        self.mark(1, "", 900.0, 300.0)                        # a new mark: no text yet
+        self.mark(1, "Ride start", 900.0, 300.0, "changed")   # typed in
+        self.assertIn("Ride start saved for Base (1 there now)", self.e.said[-1])
+        self.mark(2, "ride start", 1100.0, -300.0)
+        saved = json.loads(self.s.rides.starts_path.read_text())
+        self.assertEqual([(s["x"], s["y"]) for s in saved["Syria"]["Base"]], [(900.0, 300.0), (1100.0, -300.0)])
+        self.mark(1, "ride start, by the ops building", 900.0, 300.0, "changed")   # edited: still one
+        self.assertEqual(len(self.s.rides.starts.at("Syria", "Base")), 2)
+        self.mark(3, "ride start delete", 1110.0, -290.0)
+        self.assertEqual(len(self.s.rides.starts.at("Syria", "Base")), 1)
+        self.mark(4, "ride start", 50_000.0, 0.0)
+        self.assertIn("No airbase within", self.e.said[-1])
+        self.mark(5, "SAM here", 900.0, 0.0)                  # other marks: ignored
+        self.assertEqual(len(self.s.rides.starts.at("Syria", "Base")), 1)
+        await asyncio.gather(*self.e.tasks)
+        drawn = self.mission("draw")[-1]
+        self.assertEqual((drawn["shape"], drawn["text"]), ("mark", "Ride start (Base, saved)"))
+
+    async def test_the_ride_starts_at_the_mapped_start(self):
+        self.s.rides.starts.add("Syria", "blue_ab", rides.Pos(700.0, 20.0))
+        self.s.rides.starts.add("Syria", "blue_ab", rides.Pos(5000.0, 0.0))
+        await self.s.on_mission()
+        self.e.warmap.viewers[1] = Viewer(1, version=24)
+        self.w.state.clock = self.f.takeoff_time - FLY_OPEN_S
+        await self.s.fly(1, "abc", "bai2")
+        await self.settle()
+        car = self.mission("spawn_group")[0]["group"]["units"][0]
+        self.assertEqual((car["x"], car["y"]), (700.0, 20.0))
 
     async def test_an_old_client_script_goes_straight_in(self):
         await self.s.on_mission()

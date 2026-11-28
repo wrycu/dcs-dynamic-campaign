@@ -328,6 +328,7 @@ class Session:
 
     def on_event(self, data: dict[str, Any]) -> None:
         """A Client unit of a committed flight is born: the flight is in DCS."""
+        self.rides.on_event(data)   # F10 marks mapping where rides start
         if data.get("kind") != "birth":
             return
         unit = data.get("unit") or {}

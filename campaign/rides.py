@@ -30,14 +30,15 @@ import logging
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from . import ride as plan_ride
-from . import taxinet
+from . import model_boxes, taxinet
 from .bridge import BridgeError
 from .catalog import COUNTRY_FOR_SIDE
 from .model import Flight, FlightState, Pos, Side, SpawnState
 from .protocol import as_list
+from .ride_starts import BASE_M, DELETE_M, PATH as STARTS_PATH, RideStarts, mark_intent, nearest_airbase
 from .seats import seat_name
 
 if TYPE_CHECKING:
@@ -122,12 +123,60 @@ class Ride:
 @dataclass
 class BaseInfo:
     net: taxinet.TaxiNet | None
-    start: Pos | None = None
-    beside: str = ""
 
 
 def _dist(a: Pos, b: Pos) -> float:
     return math.hypot(a.x - b.x, a.y - b.y)
+
+
+RIDE_DRAW_ID = 3700         # the saved starts' marks on the F10 map (ghosts use 3900 up)
+RIDE_DRAW_MAX = 150
+FOOTPRINT_M = 250.0        # objects' footprints this far around the chosen building
+
+
+async def find_start(call: Callable[[str, dict[str, Any]], Awaitable[Any]], net: taxinet.TaxiNet | None,
+                     jets: list[Pos], mapped: list[Pos] | None = None,
+                     boxes: dict[str, list[float]] | None = None) -> tuple[Pos, str, str]:
+    """Where a ride starts: the base's mapped start nearest the jets (campaign/ride_starts.py), if
+    it has any. Else beside an administrative building (ride.ADMIN_MODELS: the best near the jets),
+    or failing one the building nearest the jets, at the nearest spot clear of everything around it
+    (footprints: DCS's boxes, else the models' from the terrain's files, ``boxes``) with a clear
+    line onto the taxiways; else on the taxiways in front of it. ``call`` is the mission bridge's. Returns
+    (spot, what it's beside, a line for the log)."""
+    c = Pos(sum(j.x for j in jets) / len(jets), sum(j.y for j in jets) / len(jets))
+    if mapped:
+        p = min(mapped, key=lambda m: _dist(m, c))
+        return p, "the mapped start", (f"at the mapped start x {p.x:.0f} y {p.y:.0f}, {_dist(p, c):.0f} m from the jets "
+                                       f"(1 of {len(mapped)} for this base)")
+    found: list[dict[str, Any]] = []
+    try:
+        res = await call("query", {"what": "scenery", "center": {"x": c.x, "y": c.y}, "radius": SCENERY_M,
+                                   "limit": 400, "match": list(plan_ride.TOWER_WORDS + plan_ride.BUILDING_WORDS)})
+        found = [o for o in as_list((res or {}).get("found")) if isinstance(o, dict)]
+    except (BridgeError, asyncio.TimeoutError) as e:
+        log.warning("RIDE scenery query failed: %s", e)
+    pick = plan_ride.pick_admin(found, net, jets) or plan_ride.pick_building(found, net, jets)
+    if pick is None:
+        far = Pos(c.x + 300, c.y)
+        p = net.nearest(far)[2] if net else far
+        return p, "the taxiway", f"on the taxiway (no tower or building found): x {p.x:.0f} y {p.y:.0f}"
+    what = str(pick.get("type"))
+    bp = Pos(float(pick["pos"]["x"]), float(pick["pos"]["y"]))
+    obstacles: list[plan_ride.Footprint] = []
+    try:
+        res = await call("query", {"what": "footprints", "center": {"x": bp.x, "y": bp.y}, "radius": FOOTPRINT_M})
+        obstacles = plan_ride.footprints((o for o in as_list((res or {}).get("found")) if isinstance(o, dict)), boxes)
+    except (BridgeError, asyncio.TimeoutError) as e:
+        log.warning("RIDE footprints query failed (%s): starting on the taxiway in front of %s", e, what)
+    sized = sum(1 for o in obstacles if o.corners)
+    spot = plan_ride.clear_spot(bp, net, obstacles, toward=jets[0]) if obstacles else None
+    if spot is not None:
+        p, d = spot
+        return p, what, (f"beside {what}: x {p.x:.0f} y {p.y:.0f}, {d:.0f} m from its centre, clear of "
+                         f"{len(obstacles)} objects ({sized} with their size)")
+    p = plan_ride.taxi_entry(net, bp) or plan_ride.stop_beside(None, bp, None, jets[0])
+    return p, what, (f"on the taxiway in front of {what}: x {p.x:.0f} y {p.y:.0f} (no clear spot beside it "
+                     f"among {len(obstacles)} objects)")
 
 
 class Rides:
@@ -141,6 +190,11 @@ class Rides:
         self.slot_of: dict[int, str] = {}            # player id -> their slot ("" spectators), from the Hooks
         self.theatre = ""
         self.dcs_dir: Path | None = None             # the DCS install (taxiway files); None: tools' default
+        self.boxes: dict[str, list[float]] | None = None   # scenery models' sizes (campaign/model_boxes.py)
+        self.starts_path: Path = STARTS_PATH          # the mapped starts (tests use their own)
+        self._starts: RideStarts | None = None
+        self.marked: dict[Any, tuple[str, Pos]] = {}  # F10 mark id -> the start it saved (airbase, spot)
+        self.drawn: list[int] = []                   # the saved starts drawn on the F10 map
         self.boarded: set[tuple[str, str]] = set()   # (flight id, ucid): boarded by themselves this mission
         self.told: set[tuple[str, str]] = set()      # (flight id, ucid): told when their ride comes
         self.waiting: dict[str, str] = {}            # ucid -> why they aren't boarded yet (logged on change)
@@ -178,6 +232,8 @@ class Rides:
             self.theatre = str((info or {}).get("theatre") or "")
         except (BridgeError, asyncio.TimeoutError) as e:
             log.warning("RIDE no theatre (%s): driving straight across the ground", e)
+        self.drawn = []   # a new mission: none of ours on its map yet
+        await self.draw_starts()
         for f in flights:
             units = {str(u.get("name")): u for u in groups.get(f.client_group or "", []) if isinstance(u, dict)}
             jets = []
@@ -229,27 +285,72 @@ class Rides:
         self.bases[name] = BaseInfo(net)
         return self.bases[name]
 
-    async def start_for(self, base: BaseInfo, jets: list[RideJet]) -> Pos:
-        """Where the ride starts: beside the tower or the building nearest the jets (once per base)."""
-        if base.start is not None:
-            return base.start
-        c = Pos(sum(j.pos.x for j in jets) / len(jets), sum(j.pos.y for j in jets) / len(jets))
-        found: list[dict[str, Any]] = []
+    async def start_for(self, f: Flight, base: BaseInfo, jets: list[RideJet]) -> tuple[Pos, str]:
+        """Where the flight's ride starts, and what it's beside: see find_start."""
+        mapped = self.starts.at(self.theatre, self.airbase(f))
+        if self.boxes is None:
+            self.boxes = model_boxes.load(model_boxes.path_for(self.theatre)) if self.theatre else {}
+            log.info("RIDE %d scenery model sizes for %s", len(self.boxes), self.theatre or "?")
+        p, what, note = await find_start(self.e.mission_call, base.net, [j.pos for j in jets], mapped, self.boxes)
+        log.info("RIDE start %s", note)
+        return p, what
+
+    # ----- mapping where rides start: F10 marks (campaign/ride_starts.py) -----
+
+    @property
+    def starts(self) -> RideStarts:
+        if self._starts is None:
+            self._starts = RideStarts(self.starts_path)
+        return self._starts
+
+    def on_event(self, data: dict[str, Any]) -> None:
+        if data.get("kind") != "mark" or data.get("change") not in ("added", "changed"):
+            return
+        intent = mark_intent(data.get("text"))
+        idx = data.get("idx")
+        pos = data.get("pos")
+        if not isinstance(pos, dict) or not self.theatre:
+            return
+        p = Pos(float(pos["x"]), float(pos["y"]))
+        ab = nearest_airbase(getattr(self.e, "airbases", {}) or {}, p)
+        if intent is None:
+            saved = self.marked.pop(idx, None)   # a saved mark's text changed: unsaved
+            if saved is not None and self.starts.remove_near(self.theatre, saved[0], saved[1], within=1.0):
+                self.e.say(f"Ride start at {saved[0]} removed (the mark's text changed).", duration=10)
+                self.e.background(self.draw_starts())
+            return
+        if ab is None:
+            self.e.say(f"No airbase within {BASE_M / 1852:.0f} nm of that mark: no ride start saved.", duration=10)
+            return
+        if intent == "delete":
+            ok = self.starts.remove_near(self.theatre, ab, p)
+            self.e.say(f"Ride start at {ab} removed ({len(self.starts.at(self.theatre, ab))} left). You can delete "
+                       "your mark." if ok else f"No saved ride start at {ab} within {DELETE_M * 3.281:.0f} ft of that "
+                       "mark.", duration=10)
+        else:
+            if idx in self.marked:   # the same mark again (its text edited): moved, not doubled
+                self.starts.remove_near(self.theatre, self.marked[idx][0], self.marked[idx][1], within=1.0)
+            n = self.starts.add(self.theatre, ab, p)
+            self.marked[idx] = (ab, p)
+            self.e.say(f"Ride start saved for {ab} ({n} there now). Rides there start at the one nearest their "
+                       "jets. You can delete your mark.", duration=10)
+        log.info("RIDE starts at %s: %d (%s by a mark)", ab, len(self.starts.at(self.theatre, ab)), intent)
+        self.e.background(self.draw_starts())
+
+    async def draw_starts(self) -> None:
+        """The saved starts on the F10 map, for everyone, read-only."""
+        starts = self.starts.all(self.theatre) if self.theatre else []
         try:
-            res = await self.e.mission_call("query", {"what": "scenery", "center": {"x": c.x, "y": c.y},
-                                                      "radius": SCENERY_M, "limit": 400,
-                                                      "match": list(plan_ride.TOWER_WORDS + plan_ride.BUILDING_WORDS)})
-            found = [o for o in as_list((res or {}).get("found")) if isinstance(o, dict)]
+            if self.drawn:
+                await self.e.mission_call("undraw", {"ids": self.drawn})
+            self.drawn = []
+            for i, (ab, p) in enumerate(starts[:RIDE_DRAW_MAX]):
+                did = RIDE_DRAW_ID + i
+                await self.e.mission_call("draw", {"id": did, "audience": "all", "shape": "mark", "read_only": True,
+                                                   "pos": {"x": p.x, "y": p.y}, "text": f"Ride start ({ab}, saved)"})
+                self.drawn.append(did)
         except (BridgeError, asyncio.TimeoutError) as e:
-            log.warning("RIDE scenery query failed: %s", e)
-        pick = plan_ride.briefing_point(found, base.net, [j.pos for j in jets])
-        if pick is not None:
-            base.start, base.beside = pick
-        else:   # no building: 300 m off along the taxiways
-            far = Pos(c.x + 300, c.y)
-            base.start, base.beside = (base.net.nearest(far)[2] if base.net else far), "the taxiway"
-        log.info("RIDE start beside %s: x %.0f y %.0f", base.beside, base.start.x, base.start.y)
-        return base.start
+            log.warning("RIDE drawing the starts failed: %s", e)
 
     async def stand_in(self, j: RideJet) -> None:
         try:
@@ -417,9 +518,7 @@ class Rides:
         r.riders[pid] = rider
         if r.spawned:
             self.e.background(self.view(r, rider))
-        where = self.bases.get(self.airbase(f))
-        beside = f" beside {where.beside}" if where is not None and where.beside else ""
-        return (f"To {seat_name(f, seat)} by Humvee: {CHAIRS[rider.chair]}{beside}. It leaves {GATHER_S:.0f} s after "
+        return (f"To {seat_name(f, seat)} by Humvee: {CHAIRS[rider.chair]}. It leaves {GATHER_S:.0f} s after "
                 f"the first of {f.callsign} boards, and stops at each of its jets. Your view goes into it now.")
 
     async def view(self, r: Ride, rider: Rider) -> None:
@@ -460,7 +559,7 @@ class Rides:
     async def _run(self, r: Ride, f: Flight) -> None:
         jets = self.jets[f.id]
         base = await self.base(f)
-        start = await self.start_for(base, jets)
+        start, beside = await self.start_for(f, base, jets)
         legs = plan_ride.plan(base.net, start, [j.pos for j in jets], [j.heading for j in jets])
         speed = float(getattr(self.e.settings.server, "ride_kmh", 20.0)) * KMH
         first = legs[0].points
@@ -475,7 +574,7 @@ class Rides:
             "route": {"points": plan_ride.waypoints([start], speed)}}})
         r.spawned = True
         total = sum(leg.length for leg in legs)
-        log.info("RIDE %s at %s: %d legs, %.0f m: %s", r.group, base.beside, len(legs), total,
+        log.info("RIDE %s at %s: %d legs, %.0f m: %s", r.group, beside, len(legs), total,
                  ", ".join(f"{jets[leg.jet].unit if leg.jet is not None else 'off'} {leg.length:.0f} m" for leg in legs))
         loop = asyncio.get_running_loop()
         await asyncio.sleep(SPAWN_WAIT_S)
