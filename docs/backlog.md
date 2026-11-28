@@ -77,6 +77,12 @@ Southern Syria (first DCS run is Run 24). Players can't claim flights yet. Neede
      "On Road" driving, if the base's roads connect.
   5. It starts somewhere sensible: by the base's buildings (a briefing-room point per base), not
      a random parking spot.
+  Run 30 (`tools.ride_probe`, all five in the probe): `campaign/taxinet.py` reads the base's taxiway
+  network from DCS's own file (`AirfieldsTaxiways/<base>.rn5`, format decoded 2026-11-27) and
+  routes on it; `campaign/ride.py` plans the ride (start beside the tower or a building, the jets
+  nearest-first, a stop 14 m out along each stand's lead-in, then back); static Hornets stand in
+  for the empty Client jets. Then into the campaign: Fly becomes "ride to your jet" for the whole
+  flight.
 - **Where to join.** Join a flight on the ramp before takeoff, or one that is already airborne.
   To decide: joining in the air needs a spawn at the flight's position, i.e. a player slot that
   exists there; with one .miz and no client mods, the realistic options are fixed slots per

@@ -1271,3 +1271,50 @@ Send back `run29e.log` and what you saw; a clip helps.
 4. Ctrl-C the probe.
 
 Send back `run29g.log` (it has every `-eye`/`-nudge` setting), which vehicle you liked and its best seat setting; a clip helps.
+
+## Run 30: the ride, for real (`tools.ride_probe`), proof P22 continued
+Host from your DCS (MULTIPLAYER > New server), about 20 minutes, client script version 24 (from Run 29; no new client script). The ride as asked on 2026-11-27, in the probe first:
+1. **Several jets:** a two-ship (`P22 Ride-1` and `-2`, side by side). The Humvee stops beside each jet in turn (the nearest next), and each rider gets out at their own; at a jet nobody rides to it stops for a moment all the same (in the campaign, an AI jet's pilot).
+2. **Jets you can see:** a Client jet isn't in the world until its player takes the slot, so a static Hornet stands on each empty spot. It's removed just before the player is put in, and put back 3 s after they leave. Its heading is a guess (nose along the stand's way out to the taxiway); when a jet spawns, the log says how far off the guess was, and later stand-ins use the real heading.
+3. **Driving off:** after the last jet, the Humvee drives back to where it started and is removed.
+4. **Taxiways:** it drives along the base's taxiways, read from DCS's own taxiway file for the base (`Mods/terrains/Syria/AirfieldsTaxiways/Khalkhalah.rn5`, campaign/taxinet.py), keeping off the runway except to cross it, and stops 14 m out along each jet's stand lead-in, in front of its nose.
+5. **The start:** beside the tower, or else the building nearest the jets, from the scenery around them (`SCENERY` lists what's there, `START` what it chose).
+
+The Humvee waits 8 s at the start after the first `-ride` so others can board: front passenger seat, then the back seats. A second player isn't needed: `-ride` alone rides to jet 2, stopping at jet 1 on the way.
+
+1. Client script version 24 (install it if `CLIENT` says 23, and restart DCS). `python3 -m tools.ride_probe 2>&1 | tee run30.log` and host `campaign-dev/campaign-p20.miz`: the probe builds `campaign-p22a.miz` (or `-p22b`, whichever isn't loaded) with the two-ship and loads it (`BUILD` lines). First try: hosting the old `campaign-p22.miz` made the probe rebuild that same file and DCS refused to reload it ("Attempt to restart server with an invalid mission": it won't reload the loaded file once it's rewritten), so the probe now alternates two names, as the campaign's session missions do. Expect `TAXI Khalkhalah: 156 ... segments`, two `JETS` lines, `SCENERY`, `START`, and two `STATIC` lines.
+2. **Before riding**, as a blue spectator, look at the jets (F10 map, then F7/F11 near them): are both stand-in Hornets there, on their spots, facing sensibly? Where is the start (F10: near the tower or a building)?
+3. **Ride:** `-ride` (to jet 2). Your view goes into the Humvee at the start. Then, after 8 s:
+   - does it follow the taxiways (not across the sand), cross the runway at a crossing, and avoid hitting things?
+   - does it stop in front of jet 1 for a few seconds (chat: *Stopping at jet 1 (not yours)*), then go on to jet 2?
+   - at jet 2: into the cockpit; is the jet where the stand-in was, facing the same way (`STATIC jet 2 spawned heading ...` gives the difference)?
+   - in the cockpit, watch the Humvee drive away (it goes back to the start and disappears).
+4. **Back again:** leave the jet to blue spectators: does jet 2's stand-in come back after a few seconds? `-ride 1` for the other jet.
+5. With a second player (optional): both `-ride` within 8 s, one each to jet 1 and jet 2: both in the Humvee (front and back seat), each dropped at their own.
+6. `-eye`/`-nudge` still tune the front seat during a ride; send the best setting if you found one in Run 29.
+7. Ctrl-C the probe.
+
+Send back `run30.log` and what you saw; a clip helps. If it went somewhere silly, the `DRIVE ... legs` line and where it got stuck (`STUCK`) say which leg.
+
+### Results (2026-11-27, first try)
+- **Good progress:** the probe built and loaded `campaign-p22a.miz` (after the file-name fix), started beside a covered hangar (`HANGARCOVERED2`, 190 m from the jets; no tower within 1,500 m of these stands), drove the taxiways to the jets with the camera in the seat, stopped at jet 1, went on to jet 2 and put you in it. The stand-in's heading was 6 deg off the real jet's.
+- **Too much fuss at each jet:** it drove 14 m into each stand to face the jet's nose, then looped back out. Wanted: drive along the row and stop beside each jet, turning towards it at most (sketch: in and down the row in front of the noses, then on).
+- **It stopped in front of the last jet and stayed:** after you went into jet 2, DCS took more than 5 s to answer a position query while it spawned your jet; the probe took the timeout as the end of the ride (`DRIVE ride failed:` with an empty message) and never sent the drive-off route or removed it.
+
+**Changed:** each stop is 15 m ahead of the jet's centre, beside its nose, side on; the Humvee comes straight off the taxiway to the first stop and straight down the row between stops close together (within 150 m). After the last stop it drives on to the junction most nearly ahead (if the way there turns back anyway, as at these two stands, which are at the end of the apron, it doesn't first drive on 15 m) and is removed 250 m later. Slow answers from DCS no longer end the ride (positions are skipped, route changes retried), and a ride that fails removes the Humvee.
+
+### Second try
+As the first (`python3 -m tools.ride_probe 2>&1 | tee run30b.log`, host `campaign-dev/campaign-p20.miz`, `-ride`). Watch: does it come in and stop beside jet 1's nose without driving into its stand, go straight down to jet 2, and, once you're in the cockpit, drive off and vanish? Send `run30b.log`; a clip or a sketch like the last one helps.
+
+### Results (second try, run30b.log)
+- Stopping beside the noses and going straight down the row to jet 2 worked; the hand-off into jet 2 worked.
+- **Still the wrong way in and out.** These jets are on an open ramp past the end of the taxiway, not at the end of a stand spoke as I'd assumed. The route went down the taxiway past jet 1, then turned back up to it, and the drive-off went round the end of the taxiway and back up it. The log ends there, because the mission was stopped.
+
+**Changed:** the Humvee leaves the taxiway and joins the row 35 m before the first stop, so it arrives driving along the row. After the last stop it carries straight on along the row. It takes a taxiway only if one lies ahead and the way there doesn't turn back (no more than 1.5 times the straight line). Otherwise it goes straight on, over the open ramp, for 250 m, and is removed.
+
+### Third try
+As before (`python3 -m tools.ride_probe 2>&1 | tee run30c.log`, host `campaign-dev/campaign-p20.miz`, `-ride`). Watch two things. Does it join the row north of jet 1 and drive down past both noses? After you're in jet 2, does it carry on south-east, past your nose, and vanish without hitting anything? Nothing checks the ramp beyond the jets for buildings yet.
+
+### Results (third try)
+- **Worked as wanted:** the Humvee joined the row before jet 1 and drove down past both noses, stopping beside each. After the hand-off it carried straight on and vanished.
+- Run 30 is done: multi-stop, visible stand-ins, driving off, taxiways, and a start beside a building.
